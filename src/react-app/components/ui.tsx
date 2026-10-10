@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { CATS, hhLabel, itemStone } from "../lib/domain";
+import { CATS, homeOf, itemStone, nameOf } from "../lib/domain";
 import { useData } from "../lib/store";
 import type { Item, ItemStatus, PostCat } from "../lib/types";
 import { colorOf, fmt } from "../lib/util";
@@ -43,19 +43,23 @@ export const StatusPill = ({ s }: { s: ItemStatus }) => <Pill cls={STATUS[s][1]}
 export const NegPill = ({ yes }: { yes: boolean }) => (yes ? <Pill cls="neg-yes">交渉あり</Pill> : <Pill cls="neg-no">交渉なし</Pill>);
 export const CatPill = ({ cat }: { cat: PostCat }) => <Pill cls={CATS[cat].cls}>{CATS[cat].label}</Pill>;
 
+/** 丸いアイコン。人IDなら下の名前の1文字目、世帯IDなら世帯名の1文字目 */
 export function Dot({ id }: { id: string }) {
 	const { d } = useData();
-	const h = d.households[id];
-	const ch = (h?.name || h?.headName || "?").slice(0, 1);
+	const p = d.people[id];
+	const parts = (p?.name ?? "").trim().split(/[\s　]+/);
+	const ch = (p ? parts[parts.length - 1] : d.households[id]?.name || "?").slice(0, 1);
 	return <span className="dot" style={{ background: colorOf(id) }} aria-hidden="true">{ch}</span>;
 }
 
+/** 人の表示：アイコン・名前・世帯 */
 export function Owner({ id, extra }: { id: string; extra?: ReactNode }) {
 	const { d } = useData();
 	return (
 		<span className="owner">
 			<Dot id={id} />
-			<b>{hhLabel(d, id)}</b>
+			<b>{nameOf(d, id)}</b>
+			<span className="owner-home">{homeOf(d, id)}</span>
 			{extra}
 		</span>
 	);

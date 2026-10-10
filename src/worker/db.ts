@@ -20,7 +20,8 @@ const ok = (id: unknown): id is string => typeof id === "string" && SAFE_ID.test
 
 // ---------- 行 → 画面のデータ ----------
 const toDoc = {
-	households: (r: Row) => ({ id: r.id, name: r.name, headName: r.head_name, headBirth: r.head_birth, district: r.district, note: r.note, members: parseArr(r.members), createdAt: r.created_at, updatedAt: r.updated_at }),
+	households: (r: Row) => ({ id: r.id, name: r.name, district: r.district, note: r.note, createdAt: r.created_at, updatedAt: r.updated_at }),
+	people: (r: Row) => ({ id: r.id, householdId: r.household_id, name: r.name, relation: r.relation, birthYear: r.birth_year, createdAt: r.created_at, updatedAt: r.updated_at }),
 	jobs: (r: Row) => ({ id: r.id, owner: r.owner, title: r.title, desc: r.description, price: r.price, negotiable: !!r.negotiable, active: !!r.active, createdAt: r.created_at, updatedAt: r.updated_at }),
 	items: (r: Row) => ({ id: r.id, owner: r.owner, name: r.name, desc: r.description, priceStone: r.price_stone, priceYen: r.price_yen, photos: parseArr(r.photos), status: r.status, ...(r.buyer ? { buyer: r.buyer } : {}), ...(r.done_at ? { doneAt: r.done_at } : {}), createdAt: r.created_at, updatedAt: r.updated_at }),
 	posts: (r: Row) => ({
@@ -31,15 +32,15 @@ const toDoc = {
 	rsvps: (r: Row) => ({ postId: r.post_id, householdId: r.household_id, s: r.status, n: r.people, at: r.updated_at }),
 	threads: (r: Row) => ({ id: r.id, kind: r.kind, refId: r.ref_id, owner: r.owner, other: r.other, title: r.title, lastAt: r.last_at, lastBy: r.last_by ?? null, lastText: r.last_text, createdAt: r.created_at }),
 	messages: (r: Row) => ({ id: r.id, threadId: r.thread_id, from: r.sender, text: r.text, sys: !!r.sys, t: r.sent_at }),
-	reads: (r: Row) => ({ householdId: r.household_id, threadId: r.thread_id, at: r.read_at }),
-	seen: (r: Row) => ({ householdId: r.household_id, at: r.seen_at }),
+	reads: (r: Row) => ({ userId: r.user_id, threadId: r.thread_id, at: r.read_at }),
+	seen: (r: Row) => ({ userId: r.user_id, at: r.seen_at }),
 	ledger: (r: Row) => ({ id: r.id, date: r.date, kind: r.kind, refId: r.ref_id, tid: r.thread_id, from: r.payer, to: r.payee, amount: r.amount, title: r.title, by: r.recorded_by, at: r.recorded_at }),
 };
 export type Table = keyof typeof toDoc;
 
 /**
  * since（ミリ秒）より後に変わった行を返す。
- * 相談・メッセージ・既読は、その世帯（me）が関わるものだけを返す。
+ * 相談・メッセージ・既読は、ログイン中の人（me）が関わるものだけを返す。
  */
 export async function sync(db: D1Database, since: number, me: string | null) {
 	const now = Date.now();
@@ -47,6 +48,7 @@ export async function sync(db: D1Database, since: number, me: string | null) {
 	const q = (sql: string, ...binds: unknown[]) => db.prepare(sql).bind(...binds);
 	const res = await db.batch([
 		q("SELECT * FROM households WHERE updated_at > ?", since),
+		q("SELECT * FROM people WHERE updated_at > ?", since),
 		q("SELECT * FROM jobs WHERE updated_at > ?", since),
 		q("SELECT * FROM items WHERE updated_at > ?", since),
 		q("SELECT * FROM posts WHERE updated_at > ?", since),
@@ -54,32 +56,32 @@ export async function sync(db: D1Database, since: number, me: string | null) {
 		q("SELECT * FROM threads WHERE updated_at > ? AND (owner = ? OR other = ?)", since, mine, mine),
 		q(`SELECT m.* FROM messages m JOIN threads t ON t.id = m.thread_id
 		   WHERE m.updated_at > ? AND (t.owner = ? OR t.other = ?)`, since, mine, mine),
-		q("SELECT * FROM reads WHERE updated_at > ? AND household_id = ?", since, mine),
-		q("SELECT * FROM seen WHERE updated_at > ?", since),
+		q("SELECT * FROM reads WHERE updated_at > ? AND user_id = ?", since, mine),
+		q("SELECT * FROM seen WHERE updated_at > ? AND user_id = ?", since, mine),
 		q("SELECT * FROM ledger WHERE updated_at > ?", since),
 		q("SELECT tbl, id FROM tombstones WHERE deleted_at > ?", since),
 	]);
-	const tables: Table[] = ["households", "jobs", "items", "posts", "rsvps", "threads", "messages", "reads", "seen", "ledger"];
+	const tables: Table[] = ["households", "people", "jobs", "items", "posts", "rsvps", "threads", "messages", "reads", "seen", "ledger"];
 	const rows: Record<string, unknown[]> = {};
 	tables.forEach((t, i) => {
 		const conv = toDoc[t] as (r: Row) => Doc;
 		rows[t] = ((res[i].results ?? []) as Row[]).map((r) => conv(r));
 	});
-	const deleted = (res[10].results ?? []) as { tbl: string; id: string }[];
+	const deleted = (res[11].results ?? []) as { tbl: string; id: string }[];
 	return { now, rows, deleted };
 }
 
 // ---------- 画面からの変更 → SQL ----------
 export type Op =
-	| { t: "upsert"; tbl: "households" | "jobs" | "items" | "posts" | "threads" | "ledger"; doc: Doc }
+	| { t: "upsert"; tbl: "households" | "people" | "jobs" | "items" | "posts" | "threads" | "ledger"; doc: Doc }
 	| { t: "message"; doc: Doc }
 	| { t: "rsvp"; postId: string; householdId: string; s: "go" | "maybe"; n: number }
 	| { t: "unrsvp"; postId: string; householdId: string }
-	| { t: "read"; householdId: string; threadId: string; at: number }
-	| { t: "seen"; householdId: string; at: number }
-	| { t: "delete"; tbl: "households" | "jobs" | "items" | "posts" | "ledger"; id: string };
+	| { t: "read"; userId: string; threadId: string; at: number }
+	| { t: "seen"; userId: string; at: number }
+	| { t: "delete"; tbl: "people" | "jobs" | "items" | "posts" | "ledger"; id: string };
 
-const DELETABLE = new Set(["households", "jobs", "items", "posts", "ledger"]);
+const DELETABLE = new Set(["people", "jobs", "items", "posts", "ledger"]);
 
 export function buildStatements(db: D1Database, ops: Op[], now: number): D1PreparedStatement[] {
 	const out: D1PreparedStatement[] = [];
@@ -93,10 +95,16 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 			const created = intOr(d.createdAt, now);
 			switch (op.tbl) {
 				case "households":
-					p(`INSERT INTO households (id,name,head_name,head_birth,district,note,members,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)
-					   ON CONFLICT(id) DO UPDATE SET name=excluded.name, head_name=excluded.head_name, head_birth=excluded.head_birth,
-					   district=excluded.district, note=excluded.note, members=excluded.members, updated_at=excluded.updated_at`,
-					d.id, str(d.name, 100), str(d.headName, 100), str(d.headBirth, 10), str(d.district, 100), str(d.note, 1000), jsonArr(d.members), created, now);
+					// 世帯は管理者だけが作る。ここでは名前・地区・メモの更新だけ
+					p("UPDATE households SET name = ?, district = ?, note = ?, updated_at = ? WHERE id = ?",
+						str(d.name, 100) || "世帯", str(d.district, 100), str(d.note, 1000), now, d.id);
+					break;
+				case "people":
+					if (!ok(d.householdId) || !str(d.name, 100)) continue;
+					// 世帯（household_id）は後から変えられない
+					p(`INSERT INTO people (id,household_id,name,relation,birth_year,created_at,updated_at) VALUES (?,?,?,?,?,?,?)
+					   ON CONFLICT(id) DO UPDATE SET name=excluded.name, relation=excluded.relation, birth_year=excluded.birth_year, updated_at=excluded.updated_at`,
+					d.id, d.householdId, str(d.name, 100), str(d.relation, 20), str(d.birthYear, 10), created, now);
 					break;
 				case "jobs":
 					if (!ok(d.owner)) continue;
@@ -161,21 +169,139 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 			p("DELETE FROM rsvps WHERE post_id = ? AND household_id = ?", op.postId, op.householdId);
 			p("INSERT OR REPLACE INTO tombstones (tbl,id,deleted_at) VALUES ('rsvps',?,?)", `${op.postId}|${op.householdId}`, now);
 		} else if (op.t === "read") {
-			if (!ok(op.householdId) || !ok(op.threadId)) continue;
-			p(`INSERT INTO reads (household_id,thread_id,read_at,updated_at) VALUES (?,?,?,?)
-			   ON CONFLICT(household_id,thread_id) DO UPDATE SET read_at=MAX(reads.read_at, excluded.read_at), updated_at=excluded.updated_at`,
-			op.householdId, op.threadId, intOr(op.at, now), now);
+			if (!ok(op.userId) || !ok(op.threadId)) continue;
+			p(`INSERT INTO reads (user_id,thread_id,read_at,updated_at) VALUES (?,?,?,?)
+			   ON CONFLICT(user_id,thread_id) DO UPDATE SET read_at=MAX(reads.read_at, excluded.read_at), updated_at=excluded.updated_at`,
+			op.userId, op.threadId, intOr(op.at, now), now);
 		} else if (op.t === "seen") {
-			if (!ok(op.householdId)) continue;
-			p(`INSERT INTO seen (household_id,seen_at,updated_at) VALUES (?,?,?)
-			   ON CONFLICT(household_id) DO UPDATE SET seen_at=MAX(seen.seen_at, excluded.seen_at), updated_at=excluded.updated_at`,
-			op.householdId, intOr(op.at, now), now);
+			if (!ok(op.userId)) continue;
+			p(`INSERT INTO seen (user_id,seen_at,updated_at) VALUES (?,?,?)
+			   ON CONFLICT(user_id) DO UPDATE SET seen_at=MAX(seen.seen_at, excluded.seen_at), updated_at=excluded.updated_at`,
+			op.userId, intOr(op.at, now), now);
 		} else if (op.t === "delete") {
 			if (!DELETABLE.has(op.tbl) || !ok(op.id)) continue;
 			p(`DELETE FROM ${op.tbl} WHERE id = ?`, op.id);
 			if (op.tbl === "posts") p("DELETE FROM rsvps WHERE post_id = ?", op.id);
 			p("INSERT OR REPLACE INTO tombstones (tbl,id,deleted_at) VALUES (?,?,?)", op.tbl, op.id, now);
 		}
+	}
+	return out;
+}
+
+// ---------- 権限チェック ----------
+type Who = { userId: string; householdId: string; role: "member" | "admin" };
+type OwnerRow = { id: string; owner: string };
+type ThreadRow = { id: string; kind: string; owner: string; other: string };
+type LedgerRow = { id: string; thread_id: string; kind: string };
+
+async function selectIn<T>(db: D1Database, sql: (ph: string) => string, ids: string[]): Promise<T[]> {
+	const out: T[] = [];
+	for (let i = 0; i < ids.length; i += 90) {
+		const chunk = ids.slice(i, i + 90);
+		const r = await db.prepare(sql(chunk.map(() => "?").join(","))).bind(...chunk).all<T>();
+		out.push(...(r.results ?? []));
+	}
+	return out;
+}
+
+/**
+ * ログイン中の人に許される操作だけを残す。
+ * - 世帯情報・家族の登録：自分の世帯だけ（管理者は全世帯）。ログインを持つ家族は消せない
+ * - 仕事・出品・投稿：自分が出したものだけ（管理者は削除・編集も可）
+ * - 相談・メッセージ：自分が当事者のスレッドだけ。送信者は自分
+ * - 石の流通：当事者だけ。フリマの成立は出品者だけ
+ * - 参加表明：自分の世帯の分だけ ／ 既読：自分の分だけ
+ */
+export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op[]> {
+	const me = who.userId;
+	const myHome = who.householdId;
+	const admin = who.role === "admin";
+	// 家族（people）の持ち主の世帯と、ログインの有無
+	const personIds = [...new Set(ops.flatMap((op) => (op.t === "upsert" && op.tbl === "people" && ok(op.doc?.id) ? [op.doc.id as string] : op.t === "delete" && op.tbl === "people" && ok(op.id) ? [op.id] : [])))];
+	const [peopleRows, accountRows] = await Promise.all([
+		selectIn<{ id: string; household_id: string }>(db, (p) => `SELECT id, household_id FROM people WHERE id IN (${p})`, personIds),
+		selectIn<{ user_id: string }>(db, (p) => `SELECT user_id FROM accounts WHERE user_id IN (${p})`, personIds),
+	]);
+	const personHome = new Map(peopleRows.map((r) => [r.id, r.household_id]));
+	const hasLogin = new Set(accountRows.map((r) => r.user_id));
+	const ids = { jobs: new Set<string>(), items: new Set<string>(), posts: new Set<string>(), threads: new Set<string>(), ledger: new Set<string>() };
+	for (const op of ops) {
+		if (op.t === "upsert" && op.tbl in ids && ok(op.doc?.id)) {
+			ids[op.tbl as keyof typeof ids].add(op.doc.id as string);
+			if (op.tbl === "ledger" && ok(op.doc.tid)) ids.threads.add(op.doc.tid as string);
+			if (op.tbl === "threads" && ok(op.doc.refId)) {
+				const k = op.doc.kind === "job" ? "jobs" : op.doc.kind === "item" ? "items" : op.doc.kind === "info" ? "posts" : null;
+				if (k) ids[k].add(op.doc.refId as string);
+			}
+		}
+		if (op.t === "delete" && op.tbl in ids && ok(op.id)) ids[op.tbl as keyof typeof ids].add(op.id);
+		if (op.t === "message" && ok(op.doc?.threadId)) ids.threads.add(op.doc.threadId as string);
+	}
+	const [jobs, items, posts, threads, ledger] = await Promise.all([
+		selectIn<OwnerRow>(db, (p) => `SELECT id, owner FROM jobs WHERE id IN (${p})`, [...ids.jobs]),
+		selectIn<OwnerRow>(db, (p) => `SELECT id, owner FROM items WHERE id IN (${p})`, [...ids.items]),
+		selectIn<OwnerRow>(db, (p) => `SELECT id, owner FROM posts WHERE id IN (${p})`, [...ids.posts]),
+		selectIn<ThreadRow>(db, (p) => `SELECT id, kind, owner, other FROM threads WHERE id IN (${p})`, [...ids.threads]),
+		selectIn<LedgerRow>(db, (p) => `SELECT id, thread_id, kind FROM ledger WHERE id IN (${p})`, [...ids.ledger]),
+	]);
+	const owner = {
+		jobs: new Map(jobs.map((r) => [r.id, r.owner])),
+		items: new Map(items.map((r) => [r.id, r.owner])),
+		posts: new Map(posts.map((r) => [r.id, r.owner])),
+	};
+	const missing = [...new Set(ledger.map((l) => l.thread_id))].filter((id) => !threads.some((t) => t.id === id));
+	if (missing.length) threads.push(...(await selectIn<ThreadRow>(db, (p) => `SELECT id, kind, owner, other FROM threads WHERE id IN (${p})`, missing)));
+	const thr = new Map(threads.map((r) => [r.id, r]));
+	const led = new Map(ledger.map((r) => [r.id, r]));
+	const party = (t: ThreadRow | undefined) => !!t && (t.owner === me || t.other === me);
+
+	const out: Op[] = [];
+	for (const op of ops) {
+		let allow = false;
+		if (op.t === "upsert") {
+			const d = op.doc ?? {};
+			switch (op.tbl) {
+				case "households": allow = d.id === myHome || admin; break;
+				case "people": {
+					const home = personHome.get(d.id as string);
+					allow = home ? (home === myHome || admin) && d.householdId === home : d.householdId === myHome;
+					break;
+				}
+				case "jobs": case "items": case "posts": {
+					const cur = owner[op.tbl].get(d.id as string);
+					allow = cur ? (cur === me || admin) && d.owner === cur : d.owner === me;
+					if (allow && !cur) owner[op.tbl].set(d.id as string, me);
+					break;
+				}
+				case "threads": {
+					const cur = thr.get(d.id as string);
+					if (cur) allow = party(cur);
+					else {
+						const k = d.kind === "job" ? "jobs" : d.kind === "item" ? "items" : "posts";
+						const refOwner = owner[k].get(d.refId as string);
+						allow = d.other === me && !!refOwner && refOwner === d.owner && refOwner !== me;
+						if (allow) thr.set(d.id as string, { id: d.id as string, kind: String(d.kind), owner: refOwner as string, other: me });
+					}
+					break;
+				}
+				case "ledger": {
+					const t = thr.get(d.tid as string);
+					allow = !!t && party(t) && d.by === me && d.from === t.other && d.to === t.owner && d.kind === t.kind && (t.kind !== "item" || t.owner === me);
+					break;
+				}
+			}
+		} else if (op.t === "message") {
+			allow = op.doc?.from === me && party(thr.get(op.doc?.threadId as string));
+		} else if (op.t === "rsvp" || op.t === "unrsvp") {
+			allow = op.householdId === myHome;
+		} else if (op.t === "read" || op.t === "seen") {
+			allow = op.userId === me;
+		} else if (op.t === "delete") {
+			if (op.tbl === "ledger") { const l = led.get(op.id); allow = !!l && (party(thr.get(l.thread_id)) || admin); }
+			else if (op.tbl === "people") { const home = personHome.get(op.id); allow = !!home && (home === myHome || admin) && !hasLogin.has(op.id) && op.id !== me; }
+			else { const cur = owner[op.tbl].get(op.id); allow = !!cur && (cur === me || admin); }
+		}
+		if (allow) out.push(op);
 	}
 	return out;
 }

@@ -2,12 +2,26 @@ import { CONFIG } from "../config";
 import type { Item, LedgerEntry, Post, PostCat, State, Thread, ThreadKind } from "./types";
 import { WD } from "./util";
 
-// ---- 世帯 ----
-export function hhLabel(d: State, id: string | null | undefined) {
-	const h = id ? d.households[id] : undefined;
-	return h ? h.name || h.headName + " 家" : "退会した世帯";
+// ---- 世帯と人 ----
+/** 世帯名（世帯ID） */
+export function hhLabel(d: State, householdId: string | null | undefined) {
+	const h = householdId ? d.households[householdId] : undefined;
+	return h ? h.name || "世帯" : "退会した世帯";
 }
-export const familySize = (d: State, id: string) => 1 + (d.households[id]?.members?.length ?? 0);
+/** 人の名前（人ID） */
+export const nameOf = (d: State, userId: string | null | undefined) => (userId && d.people[userId]?.name) || "退会した人";
+/** 人が属する世帯の名前（人ID） */
+export const homeOf = (d: State, userId: string | null | undefined) => hhLabel(d, userId ? d.people[userId]?.householdId : null);
+/** 「山田 花子（山田家）」 */
+export const whoLabel = (d: State, userId: string | null | undefined) => `${nameOf(d, userId)}（${homeOf(d, userId)}）`;
+export const householdOf = (d: State, userId: string | null | undefined) => (userId ? d.people[userId]?.householdId ?? null : null);
+const RELATION_ORDER = ["世帯主", "配偶者", "父", "母", "祖父", "祖母", "子", "孫", "兄弟姉妹", "その他"];
+export function familyOf(d: State, householdId: string | null | undefined) {
+	return Object.values(d.people)
+		.filter((p) => p.householdId === householdId)
+		.sort((a, b) => (RELATION_ORDER.indexOf(a.relation) + 100) % 100 - (RELATION_ORDER.indexOf(b.relation) + 100) % 100 || a.createdAt - b.createdAt);
+}
+export const familySize = (d: State, householdId: string | null | undefined) => familyOf(d, householdId).length;
 
 // ---- フリマの値段 ----
 export function itemStone(i: Item): number | null {
@@ -56,9 +70,8 @@ export function ageBucket(y: string | undefined) {
 	return a < 6 ? "未就学" : a < 12 ? "小学生" : a < 15 ? "中学生" : a < 18 ? "高校生" : "大人";
 }
 export function myBuckets(d: State, me: string) {
-	const h = d.households[me];
 	const s = new Set(["大人"]);
-	if (h) [h.headBirth, ...(h.members ?? []).map((m) => m.birthYear)].forEach((y) => { const b = ageBucket(y); if (b) s.add(b); });
+	for (const p of familyOf(d, householdOf(d, me))) { const b = ageBucket(p.birthYear); if (b) s.add(b); }
 	return s;
 }
 export function forMyKids(d: State, me: string, p: Post) {

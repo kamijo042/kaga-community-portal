@@ -3,7 +3,7 @@ import { Empty, Modal, NegPill, Owner, Pill, Stone } from "../components/ui";
 import { JobForm } from "../forms/JobForm";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
-import { hhLabel, isUnread, threadsFor } from "../lib/domain";
+import { homeOf, isUnread, nameOf, threadsFor } from "../lib/domain";
 import { useData } from "../lib/store";
 import type { Job } from "../lib/types";
 
@@ -32,7 +32,7 @@ function Browse() {
 	const qq = q.trim().toLowerCase();
 	const list = active
 		.filter((j) => neg === "all" || (neg === "yes" ? j.negotiable : !j.negotiable))
-		.filter((j) => !qq || `${j.title} ${j.desc} ${hhLabel(d, j.owner)}`.toLowerCase().includes(qq))
+		.filter((j) => !qq || `${j.title} ${j.desc} ${nameOf(d, j.owner)} ${homeOf(d, j.owner)}`.toLowerCase().includes(qq))
 		.sort((a, b) => b.updatedAt - a.updatedAt);
 	return (
 		<>
@@ -90,7 +90,7 @@ function JobDetail({ id }: { id: string }) {
 	const actions = useActions();
 	const j = d.jobs[id];
 	if (!j) return <Modal title="仕事の詳細" onClose={closeModal}><p>この仕事は削除されました。</p></Modal>;
-	const district = d.households[j.owner]?.district;
+	const district = d.households[d.people[j.owner]?.householdId ?? ""]?.district;
 	return (
 		<Modal title="仕事の詳細" onClose={closeModal} footer={<>
 			<button className="btn ghost" onClick={closeModal}>閉じる</button>

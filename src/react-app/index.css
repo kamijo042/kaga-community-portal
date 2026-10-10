@@ -94,9 +94,15 @@ p{margin:0}
 .tab[aria-selected="true"] .tab-ic,.tab:hover .tab-ic{opacity:1}
 .badge{position:absolute;top:-4px;right:-10px;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--accent);color:#fff;font-size:11px;line-height:18px;text-align:center;font-weight:700;border:2px solid var(--surface);box-sizing:content-box}
 
-.who{justify-self:end;display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:999px;padding:5px 5px 5px 12px;background:var(--surface);transition:box-shadow .2s}
-.who:hover{box-shadow:var(--shadow-sm)}
-.who button{border:0;background:none;padding:2px;cursor:pointer;color:var(--ink);display:grid;place-items:center}
+.who-wrap{justify-self:end;position:relative}
+.who{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:999px;padding:5px 5px 5px 12px;background:var(--surface);transition:box-shadow .2s;cursor:pointer;color:var(--ink)}
+.who:hover,.who[aria-expanded="true"]{box-shadow:var(--shadow-sm)}
+.menu{position:absolute;right:0;top:calc(100% + 8px);min-width:240px;background:var(--surface);border-radius:var(--r);box-shadow:var(--shadow-lg);padding:8px 0;z-index:40;display:flex;flex-direction:column}
+.menu-head{padding:10px 16px 12px;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid var(--line-soft);margin-bottom:6px}
+.menu-head span{font-size:12.5px;color:var(--muted)}
+.menu button{border:0;background:none;text-align:left;padding:11px 16px;font-size:14.5px;cursor:pointer;color:var(--ink)}
+.menu button:hover{background:var(--sunk)}
+.menu hr{border:0;border-top:1px solid var(--line-soft);margin:6px 0}
 .who-name{font-size:13px;font-weight:600;max-width:12em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .who .dot{width:30px;height:30px;font-size:13px}
 
@@ -446,3 +452,44 @@ table.ledger td.l{text-align:left;white-space:normal;min-width:140px}
 .pe .noimg,.thumbs .noimg,.pthumb .noimg,.row .thumb .noimg{font-size:10px}
 @media (prefers-reduced-motion:no-preference){.chat{animation:slide .2s ease-out}@keyframes slide{from{transform:translateX(28px);opacity:.6}}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ---------- ログイン・アカウント ---------- */
+.auth-card{padding:28px}
+.auth-form{display:flex;flex-direction:column;gap:16px}
+.auth-form h3{font-size:18px}
+.form-sec{font-size:16px!important;margin-top:8px;padding-top:16px;border-top:1px solid var(--line-soft)}
+.btn.block{width:100%;padding-block:14px;font-size:16px}
+.gate-note{font-size:13px;color:var(--muted);text-align:center;line-height:1.7}
+.hint-p{font-size:13.5px;color:var(--muted)}
+.hint-p code{font-size:12.5px;background:var(--sunk);padding:1px 6px;border-radius:4px}
+.invite-for{display:flex;flex-direction:column;gap:2px;background:var(--sunk);border-radius:var(--r);padding:14px 16px;font-size:13.5px;color:var(--muted)}
+.invite-for b{font-size:18px;color:var(--ink)}
+.admin-card{margin-top:24px}
+.admin-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:12px}
+.admin-head .hint-p{margin-top:4px}
+table.accounts td{vertical-align:middle}
+.acc-name{display:flex;align-items:center;gap:10px}
+.acc-name small{color:var(--muted)}
+.acts-cell{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap}
+.invite-code{font:700 30px/1.2 ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;letter-spacing:.12em;text-align:center;padding:18px;border:2px dashed var(--line-strong);border-radius:var(--r);user-select:all}
+.copy-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.copy-row input{flex:1 1 220px;min-width:0;border:1px solid var(--line-strong);border-radius:var(--r-sm);padding:9px 12px;font-size:13px;background:var(--sunk);color:var(--muted)}
+
+/* ---------- 家族 ---------- */
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+.family{display:flex;flex-direction:column;border-top:1px solid var(--line-soft)}
+.fam-row{display:flex;gap:14px;align-items:center;padding:14px 0;border-bottom:1px solid var(--line-soft);flex-wrap:wrap}
+.fam-row .dot{width:40px;height:40px;font-size:16px}
+.fam-main{flex:1 1 180px;min-width:0;display:flex;flex-direction:column;gap:1px}
+.fam-main b{font-size:15px}
+.fam-sub{font-size:13px;color:var(--muted)}
+.fam-sub .muted,.muted{color:var(--faint)}
+.you{font-weight:500;color:var(--muted);font-size:13px;margin-left:4px}
+.fam-acts{display:flex;gap:6px;flex-wrap:wrap}
+.owner-home{color:var(--faint);font-size:.92em}
+.owner-home::before{content:"・";margin-right:2px}
+.t-home{font-size:12.5px;color:var(--muted)}
+table.accounts tr.grp td{background:var(--sunk);padding-block:9px}
+table.accounts tr.grp .acc-name small{color:var(--muted);margin-left:6px}
+.acc-person{display:flex;flex-direction:column;padding-left:42px}
+.acc-person small{color:var(--muted);font-size:12px}

@@ -3,7 +3,7 @@ import { CatPill, Empty, Modal, Owner, Photo, Pill } from "../components/ui";
 import { PostForm } from "../forms/PostForm";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
-import { evDateStr, evPast, evStart, familySize, forMyKids, goCount, hhLabel, matchesFamily, myBuckets } from "../lib/domain";
+import { evDateStr, evPast, evStart, familySize, forMyKids, goCount, hhLabel, householdOf, matchesFamily, myBuckets, nameOf } from "../lib/domain";
 import { useData } from "../lib/store";
 import type { Post, PostCat } from "../lib/types";
 import { ago, WD } from "../lib/util";
@@ -57,7 +57,7 @@ export function InfoView() {
 									<span className="ev-main">
 										<span className="ev-title">{p.title}</span>
 										<span className="ev-sub">{[p.event?.start, p.event?.place].filter(Boolean).join(" ・ ") || "時間・場所は詳細へ"}</span>
-										<span className="ev-sub">参加 {g.hh}世帯{g.people ? `（${g.people}人）` : ""}{p.rsvps?.[me]?.s === "go" && <b style={{ color: "var(--accent)" }}> ・ 参加予定</b>}</span>
+										<span className="ev-sub">参加 {g.hh}世帯{g.people ? `（${g.people}人）` : ""}{p.rsvps?.[householdOf(d, me) ?? ""]?.s === "go" && <b style={{ color: "var(--accent)" }}> ・ 参加予定</b>}</span>
 									</span>
 								</button>
 							);
@@ -103,7 +103,7 @@ export function InfoView() {
 									{p.cat === "event" && <span style={{ fontSize: 13 }}>{evDateStr(p)}{p.event?.place ? ` ・ ${p.event.place}` : ""}</span>}
 									<span className="excerpt">{p.body}</span>
 									<span className="pfoot">
-										<span>{hhLabel(d, p.owner)}</span>
+										<span>{nameOf(d, p.owner)}（{hhLabel(d, householdOf(d, p.owner))}）</span>
 										<span>{ago(p.createdAt)}</span>
 										{p.targets?.length > 0 && <span>対象：{p.targets.join("・")}</span>}
 										{g && <span>参加 {g.hh}世帯{p.event?.capacity ? ` / 定員 ${p.event.capacity}人` : ""}</span>}
@@ -123,11 +123,12 @@ export function PostDetail({ id }: { id: string }) {
 	const { closeModal, openModal, toast } = useApp();
 	const actions = useActions();
 	const p = d.posts[id];
-	const [n, setN] = useState(() => String((me && p?.rsvps?.[me]?.n) || (me ? familySize(d, me) : 1)));
-	if (!p || !me) return <Modal title="情報" onClose={closeModal}><p>この投稿は削除されました。</p></Modal>;
+	const hid = householdOf(d, me);
+	const [n, setN] = useState(() => String((hid && p?.rsvps?.[hid]?.n) || (hid ? familySize(d, hid) : 1)));
+	if (!p || !me || !hid) return <Modal title="情報" onClose={closeModal}><p>この投稿は削除されました。</p></Modal>;
 	const mine = p.owner === me;
 	const g = goCount(p);
-	const my = p.rsvps?.[me];
+	const my = p.rsvps?.[hid];
 	const past = evPast(p);
 	const full = !!p.event?.capacity && g.people >= p.event.capacity && my?.s !== "go";
 	const goers = Object.entries(p.rsvps ?? {}).filter(([, x]) => x.s === "go");
@@ -137,8 +138,9 @@ export function PostDetail({ id }: { id: string }) {
 		mutate((st) => {
 			const post = st.posts[id];
 			post.rsvps ??= {};
-			if (s === "none") delete post.rsvps[me];
-			else post.rsvps[me] = { s, n: s === "go" ? num : 0, at: Date.now() };
+			// 参加表明は世帯単位（家族の誰が押しても同じ）
+			if (s === "none") delete post.rsvps[hid];
+			else post.rsvps[hid] = { s, n: s === "go" ? num : 0, at: Date.now() };
 		});
 		toast(s === "go" ? "参加を登録しました" : s === "maybe" ? "興味ありにしました" : "取り消しました");
 	};

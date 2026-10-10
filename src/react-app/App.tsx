@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { IconBag, IconChat, IconHome, IconInfo, IconJob, IconMenu, IconStone } from "./components/icons";
-import { Dot } from "./components/ui";
+import { AccountMenu } from "./components/AccountMenu";
+import { IconBag, IconChat, IconHome, IconInfo, IconJob, IconStone } from "./components/icons";
 import { CONFIG } from "./config";
 import { AppContext, type AppCtx, type Tab } from "./lib/app";
-import { hhLabel, newPostCount, unreadCount } from "./lib/domain";
+import { newPostCount, unreadCount } from "./lib/domain";
 import { DataProvider, useData } from "./lib/store";
 import { ChatDrawer, ChatsView } from "./views/Chats";
 import { FlowView } from "./views/Flow";
-import { Gate, PasscodeGate } from "./views/Gate";
+import { LoginGate, SetupGate } from "./views/Gate";
 import { HomeView } from "./views/Home";
 import { InfoView } from "./views/Info";
 import { JobsView } from "./views/Jobs";
@@ -31,7 +31,7 @@ const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
 ];
 
 function Shell() {
-	const { d, me, setMe, mutate, status, saveError, connected } = useData();
+	const { d, me, mutate, status, saveError, connected } = useData();
 	const [tab, setTab] = useState<Tab>("info");
 	const [chatId, setChatId] = useState<string | null>(null);
 	const [modal, setModal] = useState<ReactNode>(null);
@@ -65,8 +65,10 @@ function Shell() {
 		if (status === "ready" && me && landed.current !== me) { landed.current = me; markInfoSeen(me); }
 	}, [status, me, markInfoSeen]);
 
-	const login = (id: string) => { setMe(id); setTab("info"); };
-	const logout = () => { setChatId(null); setModal(null); landed.current = null; setMe(null); };
+	// ログアウト・ログインし直したら画面の状態をリセット
+	useEffect(() => {
+		if (!me) { setChatId(null); setModal(null); setTab("info"); landed.current = null; }
+	}, [me]);
 
 	const ctx = useMemo<AppCtx>(() => ({
 		tab, goTab, chatId,
@@ -79,8 +81,9 @@ function Shell() {
 
 	let body: ReactNode;
 	if (status === "loading") body = <div className="wrap loading">読み込み中…</div>;
-	else if (status === "passcode") body = <PasscodeGate />;
-	else if (!me) body = <Gate onLogin={login} />;
+	else if (status === "offline") body = <div className="wrap loading">サーバーに接続できません。通信状態を確認して、再読み込みしてください。</div>;
+	else if (status === "setup") body = <SetupGate />;
+	else if (status === "login" || !me) body = <LoginGate />;
 	else {
 		const unread = unreadCount(d, me);
 		const newPosts = newPostCount(d, me);
@@ -103,11 +106,7 @@ function Shell() {
 								);
 							})}
 						</nav>
-						<div className="who">
-							<button onClick={logout} title="別の世帯に切り替え" aria-label="世帯を切り替える"><IconMenu /></button>
-							<span className="who-name">{hhLabel(d, me)}</span>
-							<Dot id={me} />
-						</div>
+						<AccountMenu />
 					</div>
 				</header>
 				{saveError && <div className="wrap"><p className="save-error">サーバーに保存できませんでした。通信状態を確認してください。次の操作のときに再送します。</p></div>}

@@ -21,6 +21,12 @@
 			"migrations_dir": "migrations"
 		}
 	],
+	"kv_namespaces": [
+		{
+			"binding": "AUTH",
+			"id": "ここに wrangler kv namespace create の結果の id を貼る"
+		}
+	],
 	"r2_buckets": [
 		{
 			"binding": "PHOTOS",

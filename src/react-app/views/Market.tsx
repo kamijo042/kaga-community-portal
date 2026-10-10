@@ -3,7 +3,7 @@ import { Empty, Modal, Owner, Photo, Prices, StatusPill } from "../components/ui
 import { ItemForm } from "../forms/ItemForm";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
-import { hhLabel, threadId, threadsFor } from "../lib/domain";
+import { homeOf, nameOf, threadId, threadsFor } from "../lib/domain";
 import { useData } from "../lib/store";
 
 export function MarketView() {
@@ -57,7 +57,7 @@ function Browse() {
 							</div>
 							<div className="body">
 								<span className="name">{i.name}</span>
-								<span className="owner">{hhLabel(d, i.owner)}{i.owner === me ? "（自分）" : ""}{d.households[i.owner]?.district ? ` ・ ${d.households[i.owner].district}` : ""}</span>
+								<span className="owner">{nameOf(d, i.owner)}{i.owner === me ? "（自分）" : ""} ・ {homeOf(d, i.owner)}</span>
 								<Prices item={i} />
 							</div>
 						</button>
@@ -78,7 +78,7 @@ export function ItemDetail({ id }: { id: string }) {
 	const mine = i.owner === me;
 	const ph = i.photos ?? [];
 	const myThread = !mine && d.threads[threadId("item", i.id, me)];
-	const district = d.households[i.owner]?.district;
+	const district = d.households[d.people[i.owner]?.householdId ?? ""]?.district;
 	let action = null;
 	if (mine) action = i.status !== "done" ? <button className="btn primary" onClick={() => openModal(<ItemForm existing={i} />)}>編集</button> : null;
 	else if (i.status === "done") action = i.buyer === me ? <button className="btn" onClick={() => actions.startThread("item", i.id)}>チャットを開く</button> : <button className="btn" disabled>交渉成立済み</button>;
@@ -127,7 +127,7 @@ function Mine() {
 									<h3>{i.name}</h3>
 									<div className="sub">
 										<Prices item={i} /><StatusPill s={i.status} /><span>相談 {ts.length}件</span>
-										{i.status === "done" && i.buyer && <span>成立相手：{hhLabel(d, i.buyer)}</span>}
+										{i.status === "done" && i.buyer && <span>成立相手：{nameOf(d, i.buyer)}（{homeOf(d, i.buyer)}）</span>}
 									</div>
 								</div>
 								<div className="acts">

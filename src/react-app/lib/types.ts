@@ -1,13 +1,20 @@
-export type Member = { name: string; relation: string; birthYear: string };
-
+/** 世帯（家族のまとまり）。世帯は管理者だけが作る */
 export type Household = {
 	id: string;
 	name: string;
-	headName: string;
-	headBirth: string;
 	district: string;
 	note: string;
-	members: Member[];
+	createdAt: number;
+	updatedAt: number;
+};
+
+/** 家族ひとり。ログインを持たない人（赤ちゃんなど）もいる */
+export type Person = {
+	id: string;
+	householdId: string;
+	name: string;
+	relation: string;
+	birthYear: string;
 	createdAt: number;
 	updatedAt: number;
 };
@@ -49,7 +56,7 @@ export type Thread = {
 	id: string;
 	kind: ThreadKind;
 	refId: string;
-	/** 仕事の提供者・出品者・投稿者 */
+	/** 仕事の提供者・出品者・投稿者（人のID） */
 	owner: string;
 	/** 相談を始めた側（依頼者・購入希望者・質問者） */
 	other: string;
@@ -98,9 +105,9 @@ export type LedgerEntry = {
 	kind: "job" | "item";
 	refId: string;
 	tid: string;
-	/** 石を払った世帯 */
+	/** 石を払った人 */
 	from: string;
-	/** 石を受け取った世帯 */
+	/** 石を受け取った人 */
 	to: string;
 	amount: number;
 	title: string;
@@ -109,6 +116,7 @@ export type LedgerEntry = {
 
 export type State = {
 	households: Record<string, Household>;
+	people: Record<string, Person>;
 	jobs: Record<string, Job>;
 	items: Record<string, Item>;
 	threads: Record<string, Thread>;
@@ -119,8 +127,8 @@ export type State = {
 	ledger: Record<string, LedgerEntry>;
 };
 
-export const COLS = ["households", "jobs", "items", "threads", "messages", "reads", "posts", "seen", "ledger"] as const;
+export const COLS = ["households", "people", "jobs", "items", "threads", "messages", "reads", "posts", "seen", "ledger"] as const;
 
 export const emptyState = (): State => ({
-	households: {}, jobs: {}, items: {}, threads: {}, messages: {}, reads: {}, posts: {}, seen: {}, ledger: {},
+	households: {}, people: {}, jobs: {}, items: {}, threads: {}, messages: {}, reads: {}, posts: {}, seen: {}, ledger: {},
 });

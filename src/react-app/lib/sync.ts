@@ -1,4 +1,4 @@
-import type { Household, Item, Job, LedgerEntry, Message, Post, Rsvp, State, Thread } from "./types";
+import type { Household, Item, Person, Job, LedgerEntry, Message, Post, Rsvp, State, Thread } from "./types";
 
 /**
  * サーバー（D1）との差分のやり取り
@@ -10,27 +10,28 @@ export type SyncResult = {
 	now: number;
 	rows: {
 		households: Household[];
+		people: Person[];
 		jobs: Job[];
 		items: Item[];
 		posts: Omit<Post, "rsvps">[];
 		rsvps: { postId: string; householdId: string; s: Rsvp["s"]; n: number; at: number }[];
 		threads: Thread[];
 		messages: (Message & { threadId: string })[];
-		reads: { householdId: string; threadId: string; at: number }[];
-		seen: { householdId: string; at: number }[];
+		reads: { userId: string; threadId: string; at: number }[];
+		seen: { userId: string; at: number }[];
 		ledger: LedgerEntry[];
 	};
 	deleted: { tbl: string; id: string }[];
 };
 
 export type Op =
-	| { t: "upsert"; tbl: "households" | "jobs" | "items" | "posts" | "threads" | "ledger"; doc: unknown }
+	| { t: "upsert"; tbl: "households" | "people" | "jobs" | "items" | "posts" | "threads" | "ledger"; doc: unknown }
 	| { t: "message"; doc: Message & { threadId: string } }
 	| { t: "rsvp"; postId: string; householdId: string; s: Rsvp["s"]; n: number }
 	| { t: "unrsvp"; postId: string; householdId: string }
-	| { t: "read"; householdId: string; threadId: string; at: number }
-	| { t: "seen"; householdId: string; at: number }
-	| { t: "delete"; tbl: "households" | "jobs" | "items" | "posts" | "ledger"; id: string };
+	| { t: "read"; userId: string; threadId: string; at: number }
+	| { t: "seen"; userId: string; at: number }
+	| { t: "delete"; tbl: "people" | "jobs" | "items" | "posts" | "ledger"; id: string };
 
 /** サーバーの変更を s に書き込む（s は書き換えてよいコピー） */
 export function applySync(s: State, r: SyncResult) {
@@ -44,6 +45,7 @@ export function applySync(s: State, r: SyncResult) {
 		}
 	}
 	for (const h of r.rows.households) s.households[h.id] = h;
+	for (const p of r.rows.people) s.people[p.id] = p;
 	for (const j of r.rows.jobs) s.jobs[j.id] = j;
 	for (const i of r.rows.items) s.items[i.id] = i;
 	for (const p of r.rows.posts) s.posts[p.id] = { ...p, rsvps: s.posts[p.id]?.rsvps ?? {} };
@@ -61,8 +63,8 @@ export function applySync(s: State, r: SyncResult) {
 		}
 	}
 	for (const tid of touched) s.messages[tid].sort((a, b) => a.t - b.t);
-	for (const x of r.rows.reads) (s.reads[x.householdId] ??= {})[x.threadId] = Math.max(s.reads[x.householdId]?.[x.threadId] ?? 0, x.at);
-	for (const x of r.rows.seen) s.seen[x.householdId] = Math.max(s.seen[x.householdId] ?? 0, x.at);
+	for (const x of r.rows.reads) (s.reads[x.userId] ??= {})[x.threadId] = Math.max(s.reads[x.userId]?.[x.threadId] ?? 0, x.at);
+	for (const x of r.rows.seen) s.seen[x.userId] = Math.max(s.seen[x.userId] ?? 0, x.at);
 	for (const e of r.rows.ledger) s.ledger[e.id] = e;
 }
 
@@ -71,11 +73,11 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 /** a（サーバーが知っている状態）→ b（画面の新しい状態）への操作 */
 export function diffOps(a: State, b: State): Op[] {
 	const ops: Op[] = [];
-	const plain = ["households", "jobs", "items", "threads", "ledger"] as const;
+	const plain = ["households", "people", "jobs", "items", "threads", "ledger"] as const;
 	for (const tbl of plain) {
 		const A = a[tbl] as Record<string, unknown>, B = b[tbl] as Record<string, unknown>;
 		for (const id in B) if (!same(A[id], B[id])) ops.push({ t: "upsert", tbl, doc: B[id] });
-		if (tbl !== "threads") for (const id in A) if (!(id in B)) ops.push({ t: "delete", tbl, id });
+		if (tbl !== "threads" && tbl !== "households") for (const id in A) if (!(id in B)) ops.push({ t: "delete", tbl, id });
 	}
 	// 情報の投稿（参加表明は別に送る）
 	for (const id in b.posts) {
@@ -92,7 +94,7 @@ export function diffOps(a: State, b: State): Op[] {
 		const known = new Set((a.messages[tid] ?? []).map((m) => m.id));
 		for (const m of b.messages[tid]) if (!known.has(m.id)) ops.push({ t: "message", doc: { ...m, threadId: tid } });
 	}
-	for (const hid in b.reads) for (const tid in b.reads[hid]) if (a.reads[hid]?.[tid] !== b.reads[hid][tid]) ops.push({ t: "read", householdId: hid, threadId: tid, at: b.reads[hid][tid] });
-	for (const hid in b.seen) if (a.seen[hid] !== b.seen[hid]) ops.push({ t: "seen", householdId: hid, at: b.seen[hid] });
+	for (const hid in b.reads) for (const tid in b.reads[hid]) if (a.reads[hid]?.[tid] !== b.reads[hid][tid]) ops.push({ t: "read", userId: hid, threadId: tid, at: b.reads[hid][tid] });
+	for (const hid in b.seen) if (a.seen[hid] !== b.seen[hid]) ops.push({ t: "seen", userId: hid, at: b.seen[hid] });
 	return ops;
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Empty, Pill } from "../components/ui";
 import { CONFIG } from "../config";
-import { flowStats, hhLabel, issuedUntil } from "../lib/domain";
+import { flowStats, issuedUntil, whoLabel } from "../lib/domain";
 import { useData } from "../lib/store";
 import type { State } from "../lib/types";
 import { addDays, dayLabel, downloadText, fmt, todayStr, WD } from "../lib/util";
@@ -73,7 +73,7 @@ export function FlowView() {
 										{recent.map((e) => (
 											<tr key={e.id}>
 												<td>{e.date.slice(5).replace("-", "/")}</td>
-												<td className="l"><Pill cls="tgt">{e.kind === "job" ? "仕事" : "フリマ"}</Pill> {e.title}<br /><span style={{ fontSize: 12, color: "var(--muted)" }}>{hhLabel(d, e.from)} → {hhLabel(d, e.to)}</span></td>
+												<td className="l"><Pill cls="tgt">{e.kind === "job" ? "仕事" : "フリマ"}</Pill> {e.title}<br /><span style={{ fontSize: 12, color: "var(--muted)" }}>{whoLabel(d, e.from)} → {whoLabel(d, e.to)}</span></td>
 												<td><b>{fmt(e.amount)}</b></td>
 											</tr>
 										))}
@@ -167,9 +167,9 @@ function FlowChart({ byDay, range }: { byDay: ByDay; range: number }) {
 }
 
 function downloadCSV(d: State) {
-	const rows: (string | number)[][] = [["日付", "種類", "内容", "支払った世帯", "受け取った世帯", "石"]];
+	const rows: (string | number)[][] = [["日付", "種類", "内容", "支払った人", "受け取った人", "石"]];
 	for (const e of Object.values(d.ledger).sort((a, b) => a.date.localeCompare(b.date) || a.at - b.at)) {
-		rows.push([e.date, e.kind === "job" ? "仕事" : "フリマ", e.title, hhLabel(d, e.from), hhLabel(d, e.to), e.amount]);
+		rows.push([e.date, e.kind === "job" ? "仕事" : "フリマ", e.title, whoLabel(d, e.from), whoLabel(d, e.to), e.amount]);
 	}
 	const csv = "﻿" + rows.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(",")).join("\r\n");
 	downloadText(`石の流通_${todayStr()}.csv`, csv, "text/csv");
