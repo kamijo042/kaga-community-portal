@@ -3,7 +3,9 @@
 	"name": "kaga-community-portal",
 	"main": "./src/worker/index.ts",
 	"compatibility_date": "2025-10-08",
-	"compatibility_flags": ["nodejs_compat"],
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
 	"observability": {
 		"enabled": true
 	},
@@ -11,20 +13,22 @@
 	"assets": {
 		"directory": "./dist/client",
 		"not_found_handling": "single-page-application",
-		"run_worker_first": ["/api/*"]
+		"run_worker_first": [
+			"/api/*"
+		]
 	},
 	"d1_databases": [
 		{
 			"binding": "DB",
 			"database_name": "kaga-community-portal",
-			"database_id": "ここに wrangler d1 create の結果の database_id を貼る",
+			"database_id": "fde3a3f3-3430-4535-8997-a05f98724698",
 			"migrations_dir": "migrations"
 		}
 	],
 	"kv_namespaces": [
 		{
 			"binding": "AUTH",
-			"id": "ここに wrangler kv namespace create の結果の id を貼る"
+			"id": "e9b22413eac64a52b7c34cee21a37d63"
 		}
 	],
 	"r2_buckets": [
@@ -34,10 +38,28 @@
 		}
 	],
 	"durable_objects": {
-		"bindings": [{ "name": "NOTIFIER", "class_name": "Notifier" }]
+		"bindings": [
+			{
+				"name": "NOTIFIER",
+				"class_name": "Notifier"
+			}
+		]
 	},
 	"migrations": [
-		{ "tag": "v1", "new_sqlite_classes": ["PortalHub"] },
-		{ "tag": "v2", "renamed_classes": [{ "from": "PortalHub", "to": "Notifier" }] }
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"PortalHub"
+			]
+		},
+		{
+			"tag": "v2",
+			"renamed_classes": [
+				{
+					"from": "PortalHub",
+					"to": "Notifier"
+				}
+			]
+		}
 	]
 }
