@@ -76,18 +76,12 @@ export function Empty({ title, children, steps, action }: { title: string; child
 	);
 }
 
-/** 保存済みの写真（id）を表示 */
+/** 保存済みの写真（R2 の id）を表示 */
 export function Photo({ pid, alt = "", className }: { pid: string; alt?: string; className?: string }) {
 	const { photos } = useData();
-	const [src, setSrc] = useState<string | null | undefined>(undefined);
-	useEffect(() => {
-		let alive = true;
-		photos.get(pid).then((s) => { if (alive) setSrc(s ?? null); });
-		return () => { alive = false; };
-	}, [pid, photos]);
-	if (src === null) return <div className="noimg">画像なし</div>;
-	if (!src) return <div className="noimg" aria-busy="true" />;
-	return <img src={src} alt={alt} className={className} />;
+	const [failed, setFailed] = useState(false);
+	if (failed) return <div className="noimg">画像なし</div>;
+	return <img src={photos.url(pid)} alt={alt} className={className} loading="lazy" onError={() => setFailed(true)} />;
 }
 
 export function Modal({ title, children, footer, onClose }: { title: string; children: ReactNode; footer?: ReactNode; onClose: () => void }) {

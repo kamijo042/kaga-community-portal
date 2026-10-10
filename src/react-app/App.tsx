@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { IconBag, IconChat, IconHome, IconInfo, IconJob, IconMenu, IconStone } from "./components/icons";
 import { Dot } from "./components/ui";
 import { CONFIG } from "./config";
 import { AppContext, type AppCtx, type Tab } from "./lib/app";
@@ -20,13 +21,13 @@ export default function App() {
 	);
 }
 
-const TABS: { id: Tab; label: string }[] = [
-	{ id: "info", label: "情報" },
-	{ id: "jobs", label: "仕事" },
-	{ id: "market", label: "フリマ" },
-	{ id: "chat", label: "相談" },
-	{ id: "flow", label: "石" },
-	{ id: "home", label: "世帯" },
+const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
+	{ id: "info", label: "情報", icon: <IconInfo /> },
+	{ id: "jobs", label: "仕事", icon: <IconJob /> },
+	{ id: "market", label: "フリマ", icon: <IconBag /> },
+	{ id: "chat", label: "相談", icon: <IconChat /> },
+	{ id: "flow", label: "石", icon: <IconStone /> },
+	{ id: "home", label: "世帯", icon: <IconHome /> },
 ];
 
 function Shell() {
@@ -86,24 +87,27 @@ function Shell() {
 		body = (
 			<>
 				<header className="top">
-					<div className="wrap">
-						<div className="top-row">
-							<div className="brand">
-								<span className="brand-mark" aria-hidden="true" />
-								<div><h1>{CONFIG.siteName}</h1><small>{CONFIG.tagline}</small></div>
-							</div>
-							<div className="who"><Dot id={me} /><b>{hhLabel(d, me)}</b><button onClick={logout} title="別の世帯に切り替え">切替</button></div>
+					<div className="wrap top-row">
+						<div className="brand">
+							<span className="brand-mark" aria-hidden="true" />
+							<div><h1>{CONFIG.siteName}</h1><small>{CONFIG.tagline}</small></div>
 						</div>
-						<nav className="tabs" role="tablist">
+						<nav className="tabs" role="tablist" aria-label="メニュー">
 							{TABS.map((t) => {
 								const badge = t.id === "chat" ? unread : t.id === "info" && tab !== "info" ? newPosts : 0;
 								return (
 									<button key={t.id} className="tab" role="tab" data-tab={t.id} aria-selected={tab === t.id} onClick={() => goTab(t.id)}>
-										{t.label}{badge > 0 && <span className="badge">{badge}</span>}
+										<span className="tab-ic">{t.icon}{badge > 0 && <span className="badge">{badge}</span>}</span>
+										<span className="tab-lbl">{t.label}</span>
 									</button>
 								);
 							})}
 						</nav>
+						<div className="who">
+							<button onClick={logout} title="別の世帯に切り替え" aria-label="世帯を切り替える"><IconMenu /></button>
+							<span className="who-name">{hhLabel(d, me)}</span>
+							<Dot id={me} />
+						</div>
 					</div>
 				</header>
 				{saveError && <div className="wrap"><p className="save-error">サーバーに保存できませんでした。通信状態を確認してください。次の操作のときに再送します。</p></div>}

@@ -1,16 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { COLS, emptyState, type State } from "./types";
+import { applySync, diffOps, type SyncResult } from "./sync";
+import { emptyState, type State } from "./types";
 import { uid } from "./util";
 
 /**
  * データの読み書きとリアルタイム同期
- * - 起動時に /api/state を読み込み
- * - 変更は差分（パッチ）だけを /api/patch に送る
- * - /api/ws（WebSocket）で他の人の変更を受け取り、読み直す
+ * - データ本体は D1。/api/sync?since=… で「前回より後に変わった行」だけを受け取る
+ * - 変更は操作（ops）にして /api/ops へ送る
+ * - Durable Object の WebSocket（/api/ws）から「変わったよ」が届いたら差分を取りに行く
+ * - 写真は R2（/api/photo/:id）
  */
 
-type Patch = { set: Record<string, unknown>; del: string[]; by?: string | null };
-export type SyncStatus = "loading" | "ready" | "passcode";
+export type SyncStatus = "loading" | "ready" | "passcode" | "offline";
 
 type DataCtx = {
 	d: State;
@@ -22,7 +23,7 @@ type DataCtx = {
 	saveError: boolean;
 	submitPasscode: (pass: string) => Promise<boolean>;
 	photos: {
-		get: (pid: string) => Promise<string | undefined>;
+		url: (pid: string) => string;
 		put: (dataUrl: string) => Promise<string>;
 		del: (pid: string) => void;
 	};
@@ -32,6 +33,8 @@ const Ctx = createContext<DataCtx | null>(null);
 
 const PASS_KEY = "kaga-pass";
 const ME_KEY = "kaga-me";
+/** 同時刻の書き込みを取りこぼさないよう、少し前から取り直す（ミリ秒） */
+const OVERLAP = 5000;
 const read = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
 const write = (k: string, v: string | null) => { try { if (v) localStorage.setItem(k, v); else localStorage.removeItem(k); } catch { /* 保存できない環境 */ } };
 
@@ -42,21 +45,8 @@ function api(path: string, init: RequestInit = {}) {
 	return fetch(path, { ...init, headers, cache: "no-store" });
 }
 
-function diffState(a: State, b: State): Patch | null {
-	const set: Record<string, unknown> = {};
-	const del: string[] = [];
-	for (const c of COLS) {
-		const A = a[c] as Record<string, unknown>, B = b[c] as Record<string, unknown>;
-		for (const k in B) if (JSON.stringify(A[k]) !== JSON.stringify(B[k])) set[`${c}/${k}`] = B[k];
-		for (const k in A) if (!(k in B)) del.push(`${c}/${k}`);
-	}
-	return Object.keys(set).length || del.length ? { set, del } : null;
-}
-
-function normalize(raw: Partial<State> & { rev?: number }): State {
-	const s = emptyState();
-	for (const c of COLS) if (raw[c] && typeof raw[c] === "object") (s as Record<string, unknown>)[c] = raw[c];
-	return s;
+async function dataUrlToBlob(dataUrl: string) {
+	return (await fetch(dataUrl)).blob();
 }
 
 export function DataProvider({ children }: { children: ReactNode }) {
@@ -67,127 +57,115 @@ export function DataProvider({ children }: { children: ReactNode }) {
 	const [me, setMeState] = useState<string | null>(() => read(ME_KEY));
 
 	const dRef = useRef(d);
-	const syncedRef = useRef<State>(d);
-	const revRef = useRef(0);
-	const queueRef = useRef<Promise<unknown>>(Promise.resolve());
+	/** サーバーが知っている（はずの）状態。ここと画面の差分を送る */
+	const syncedRef = useRef<State>(emptyState());
+	const cursorRef = useRef(0);
 	const meRef = useRef(me);
-	const photoCache = useRef(new Map<string, string>());
+	const queueRef = useRef<Promise<unknown>>(Promise.resolve());
+	const pullingRef = useRef<Promise<boolean> | null>(null);
+	const againRef = useRef(false);
 
-	const setMe = useCallback((id: string | null) => { meRef.current = id; write(ME_KEY, id); setMeState(id); }, []);
-
-	const refresh = useCallback(async () => {
-		await queueRef.current;
-		const r = await api("/api/state");
-		if (r.status === 401) { setStatus("passcode"); return false; }
-		if (!r.ok) throw new Error("state " + r.status);
-		const raw = (await r.json()) as Partial<State> & { rev?: number };
-		const next = normalize(raw);
-		revRef.current = Math.max(revRef.current, raw.rev ?? 0);
-		dRef.current = next;
-		syncedRef.current = structuredClone(next);
-		setD(next);
-		setStatus("ready");
-		return true;
+	/** 差分を取りに行く（同時に呼ばれたら1回にまとめる） */
+	const pull = useCallback((): Promise<boolean> => {
+		if (pullingRef.current) { againRef.current = true; return pullingRef.current; }
+		const run = async (): Promise<boolean> => {
+			do {
+				againRef.current = false;
+				await queueRef.current; // 送信中の変更を先に届ける
+				const since = cursorRef.current ? Math.max(0, cursorRef.current - OVERLAP) : 0;
+				const who = meRef.current ? `&me=${encodeURIComponent(meRef.current)}` : "";
+				const r = await api(`/api/sync?since=${since}${who}`);
+				if (r.status === 401) { setStatus("passcode"); return false; }
+				if (!r.ok) throw new Error("sync " + r.status);
+				const res = (await r.json()) as SyncResult;
+				const full = since === 0;
+				const next = full ? emptyState() : structuredClone(dRef.current);
+				const synced = full ? emptyState() : syncedRef.current;
+				applySync(next, res);
+				applySync(synced, res);
+				syncedRef.current = synced;
+				cursorRef.current = res.now;
+				dRef.current = next;
+				setD(next);
+				setStatus("ready");
+			} while (againRef.current);
+			return true;
+		};
+		const p = run().catch(() => { setStatus((s) => (s === "loading" ? "offline" : s)); return false; }).finally(() => { pullingRef.current = null; });
+		pullingRef.current = p;
+		return p;
 	}, []);
+
+	const setMe = useCallback((id: string | null) => {
+		meRef.current = id;
+		write(ME_KEY, id);
+		setMeState(id);
+		// 世帯が変わったら、その世帯の相談・既読を含めて取り直す
+		cursorRef.current = 0;
+		void pull();
+	}, [pull]);
 
 	// 起動時の読み込みと、リアルタイム接続
 	useEffect(() => {
 		let ws: WebSocket | null = null;
 		let stopped = false;
 		let retry: ReturnType<typeof setTimeout> | undefined;
-		let refreshing = false;
-		let wanted = 0;
-
-		const pull = async () => {
-			if (refreshing) return;
-			refreshing = true;
-			try {
-				while (wanted > revRef.current) {
-					const before = revRef.current;
-					if (!(await refresh())) break;
-					if (revRef.current === before) break;
-				}
-			} catch { /* 次の通知で再試行 */ } finally { refreshing = false; }
-		};
 
 		const connect = () => {
 			if (stopped) return;
 			const pass = read(PASS_KEY);
 			const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/api/ws${pass ? "?pass=" + encodeURIComponent(pass) : ""}`;
 			try { ws = new WebSocket(url); } catch { retry = setTimeout(connect, 5000); return; }
-			ws.onopen = () => setConnected(true);
-			ws.onmessage = (e) => {
-				try {
-					const { rev } = JSON.parse(String(e.data)) as { rev: number };
-					wanted = Math.max(wanted, rev);
-					void pull();
-				} catch { /* 不明なメッセージ */ }
-			};
+			ws.onopen = () => { setConnected(true); void pull(); };
+			ws.onmessage = (e) => { if (e.data !== "pong") void pull(); };
 			ws.onclose = () => { setConnected(false); if (!stopped) retry = setTimeout(connect, 3000); };
 		};
 
-		// WebSocket が使えないときの保険（20秒ごとに版番号を確認）
-		const poll = setInterval(async () => {
-			if (ws && ws.readyState === WebSocket.OPEN) { ws.send("ping"); return; }
-			try {
-				const r = await api("/api/ping");
-				if (r.ok) { const { rev } = (await r.json()) as { rev: number }; wanted = Math.max(wanted, rev); void pull(); }
-			} catch { /* オフライン */ }
-		}, 20000);
+		// 接続維持の ping と、WebSocket が使えないときの保険（30秒ごとに差分確認）
+		const timer = setInterval(() => {
+			if (ws && ws.readyState === WebSocket.OPEN) ws.send("ping");
+			else void pull();
+		}, 30000);
+		const onVisible = () => { if (document.visibilityState === "visible") void pull(); };
+		document.addEventListener("visibilitychange", onVisible);
 
-		refresh().then((ok) => { if (ok) connect(); }).catch(() => setStatus("ready"));
+		pull().then((ok) => { if (ok) connect(); });
 
-		return () => { stopped = true; clearTimeout(retry); clearInterval(poll); ws?.close(); };
-	}, [refresh]);
+		return () => { stopped = true; clearTimeout(retry); clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); ws?.close(); };
+	}, [pull]);
 
 	const mutate = useCallback((fn: (d: State) => void) => {
 		const next = structuredClone(dRef.current);
 		fn(next);
 		dRef.current = next;
 		setD(next);
-		const patch = diffState(syncedRef.current, next);
+		const ops = diffOps(syncedRef.current, next);
 		syncedRef.current = structuredClone(next);
-		if (!patch) return;
-		patch.by = meRef.current;
+		if (!ops.length) return;
 		queueRef.current = queueRef.current
-			.then(() => api("/api/patch", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) }))
-			.then(async (r) => {
-				if (!r.ok) throw new Error("patch " + r.status);
-				const { rev } = (await r.json()) as { rev: number };
-				revRef.current = Math.max(revRef.current, rev);
-				setSaveError(false);
-			})
+			.then(() => api("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ops }) }))
+			.then((r) => { if (!r.ok) throw new Error("ops " + r.status); setSaveError(false); })
 			.catch(() => setSaveError(true));
 	}, []);
 
 	const submitPasscode = useCallback(async (pass: string) => {
 		write(PASS_KEY, pass);
-		const ok = await refresh().catch(() => false);
+		cursorRef.current = 0;
+		const ok = await pull();
 		if (ok) location.reload();
 		return ok;
-	}, [refresh]);
+	}, [pull]);
 
 	const photos = useMemo(() => ({
-		async get(pid: string) {
-			const c = photoCache.current.get(pid);
-			if (c) return c;
-			try {
-				const r = await api("/api/photo/" + pid);
-				if (!r.ok) return undefined;
-				const t = await r.text();
-				photoCache.current.set(pid, t);
-				return t;
-			} catch { return undefined; }
-		},
+		url: (pid: string) => `/api/photo/${encodeURIComponent(pid)}`,
 		async put(dataUrl: string) {
 			const pid = uid("p_");
-			const r = await api("/api/photo/" + pid, { method: "PUT", body: dataUrl });
+			const blob = await dataUrlToBlob(dataUrl);
+			const r = await api("/api/photo/" + pid, { method: "PUT", headers: { "Content-Type": blob.type || "image/jpeg" }, body: blob });
 			if (!r.ok) throw new Error("画像を保存できませんでした");
-			photoCache.current.set(pid, dataUrl);
 			return pid;
 		},
 		del(pid: string) {
-			photoCache.current.delete(pid);
 			void api("/api/photo/" + pid, { method: "DELETE" }).catch(() => undefined);
 		},
 	}), []);

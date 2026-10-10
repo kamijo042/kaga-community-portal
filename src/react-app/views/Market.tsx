@@ -57,8 +57,8 @@ function Browse() {
 							</div>
 							<div className="body">
 								<span className="name">{i.name}</span>
+								<span className="owner">{hhLabel(d, i.owner)}{i.owner === me ? "（自分）" : ""}{d.households[i.owner]?.district ? ` ・ ${d.households[i.owner].district}` : ""}</span>
 								<Prices item={i} />
-								<span className="owner" style={{ fontSize: 12 }}>{hhLabel(d, i.owner)}{i.owner === me ? "（自分）" : ""}</span>
 							</div>
 						</button>
 					))}

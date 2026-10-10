@@ -1,6 +1,6 @@
 {
 	"name": "kaga-community-portal",
-	"description": "A template for building a React application with Vite, Hono, and Cloudflare Workers",
+	"description": "加賀移住者コミュニティ ポータル（React + Cloudflare Workers / D1 / R2 / Durable Objects）",
 	"cloudflare": {
 		"label": "Vite React Template",
 		"products": [
@@ -34,13 +34,15 @@
 	},
 	"private": true,
 	"scripts": {
-		"build": "tsc -b && vite build",
-		"cf-typegen": "wrangler types",
-		"check": "tsc && vite build && wrangler deploy --dry-run",
-		"deploy": "wrangler deploy",
 		"dev": "vite",
+		"build": "tsc -b && vite build",
+		"preview": "npm run build && vite preview",
 		"lint": "eslint .",
-		"preview": "npm run build && vite preview"
+		"check": "tsc && vite build && wrangler deploy --dry-run",
+		"cf-typegen": "wrangler types",
+		"db:migrate:local": "wrangler d1 migrations apply DB --local",
+		"db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+		"deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy"
 	},
 	"type": "module"
 }
