@@ -15,6 +15,8 @@ export type Person = {
 	name: string;
 	relation: string;
 	birthYear: string;
+	/** プロフィール写真（R2 の写真ID）。なければ名前の1文字目の丸アイコン */
+	avatar?: string | null;
 	createdAt: number;
 	updatedAt: number;
 };

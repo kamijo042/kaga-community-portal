@@ -43,10 +43,14 @@ export const StatusPill = ({ s }: { s: ItemStatus }) => <Pill cls={STATUS[s][1]}
 export const NegPill = ({ yes }: { yes: boolean }) => (yes ? <Pill cls="neg-yes">交渉あり</Pill> : <Pill cls="neg-no">交渉なし</Pill>);
 export const CatPill = ({ cat }: { cat: PostCat }) => <Pill cls={CATS[cat].cls}>{CATS[cat].label}</Pill>;
 
-/** 丸いアイコン。人IDなら下の名前の1文字目、世帯IDなら世帯名の1文字目 */
+/** 丸いアイコン。人IDならプロフィール写真（なければ下の名前の1文字目）、世帯IDなら世帯名の1文字目 */
 export function Dot({ id }: { id: string }) {
-	const { d } = useData();
+	const { d, photos } = useData();
 	const p = d.people[id];
+	const [broken, setBroken] = useState<string | null>(null);
+	if (p?.avatar && broken !== p.avatar) {
+		return <img className="dot avatar" src={photos.url(p.avatar)} alt="" aria-hidden="true" loading="lazy" onError={() => setBroken(p.avatar ?? null)} />;
+	}
 	const parts = (p?.name ?? "").trim().split(/[\s　]+/);
 	const ch = (p ? parts[parts.length - 1] : d.households[id]?.name || "?").slice(0, 1);
 	return <span className="dot" style={{ background: colorOf(id) }} aria-hidden="true">{ch}</span>;

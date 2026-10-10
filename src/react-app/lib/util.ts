@@ -82,6 +82,24 @@ export function compressImage(file: File): Promise<string> {
 	});
 }
 
+/** プロフィール写真用：中央を正方形に切り抜いて 400px の JPEG にする */
+export function squareAvatar(file: File, size = 400): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const url = URL.createObjectURL(file);
+		const img = new Image();
+		img.onload = () => {
+			const s = Math.min(img.naturalWidth, img.naturalHeight);
+			const c = document.createElement("canvas");
+			c.width = c.height = Math.min(size, s);
+			c.getContext("2d")?.drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, c.width, c.height);
+			URL.revokeObjectURL(url);
+			resolve(c.toDataURL("image/jpeg", 0.85));
+		};
+		img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("この画像形式は読み込めません（JPEG / PNG / WebP を選んでください）")); };
+		img.src = url;
+	});
+}
+
 export function downloadText(filename: string, text: string, type: string) {
 	const a = document.createElement("a");
 	a.href = URL.createObjectURL(new Blob([text], { type }));

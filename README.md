@@ -43,6 +43,21 @@ npx wrangler secret put ADMIN_SETUP_CODE
 
 公開後、サイトを開くと「はじめの設定」画面が出るので、初期設定コードを入れて**運営の世帯を管理者として登録**します（アカウントが1つもないときだけ表示されます）。
 
+### Cloudflare に登録する値のまとめ
+
+| 種類 | 名前 | 登録のしかた | 内容 |
+|---|---|---|---|
+| シークレット | `ADMIN_SETUP_CODE` | `npx wrangler secret put ADMIN_SETUP_CODE`（またはダッシュボード → Workers → kaga-community-portal → 設定 → 変数とシークレット） | 最初の管理者を登録するときの初期設定コード。**必須** |
+| バインディング | `DB`（D1） | `wrangler.json` の `database_id` に貼る | データ本体 |
+| バインディング | `AUTH`（KV） | `wrangler.json` の `kv_namespaces.id` に貼る | ログイン状態 |
+| バインディング | `PHOTOS`（R2） | バケット名 `kaga-community-photos` を作るだけ | 写真・プロフィール写真 |
+| バインディング | `NOTIFIER`（Durable Object） | 設定不要（初回デプロイで自動作成） | リアルタイム通知 |
+
+- 普通の環境変数（`vars`）は使っていません。登録が必要な秘密の値は `ADMIN_SETUP_CODE` だけです
+- シークレットは一度登録すれば、push でデプロイし直しても消えません
+- ローカル開発では `.dev.vars` に `ADMIN_SETUP_CODE=...` を書きます（git には入りません）
+- Workers Builds のビルド用の環境変数は不要です
+
 Cloudflare ダッシュボードの Workers Builds の **Deploy command** を `npm run deploy` にしてください。
 こうすると、push のたびに「表の変更（マイグレーション）を適用 → 公開」の順で実行されます。
 
@@ -109,7 +124,7 @@ npm run dev        # http://localhost:5173 （D1・R2・DO もローカルの模
 | `seen` | 情報タブの既読（新着表示用） |
 | `ledger` | 石の流通（成立日・払った世帯・受け取った世帯・石の額） |
 | `tombstones` | 削除の記録（差分同期用） |
-| `people` | 家族ひとりずつ（世帯・氏名・続柄・生まれ年）。ログインのない家族も含む |
+| `people` | 家族ひとりずつ（世帯・氏名・続柄・生まれ年・プロフィール写真）。ログインのない家族も含む |
 | `accounts` | ログイン（人ごと。ログインID・パスワードのハッシュ・権限・停止） |
 | `invites` | 招待コード／再設定コード（人あて。ハッシュで保存） |
 

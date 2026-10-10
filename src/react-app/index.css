@@ -493,3 +493,14 @@ table.accounts tr.grp td{background:var(--sunk);padding-block:9px}
 table.accounts tr.grp .acc-name small{color:var(--muted);margin-left:6px}
 .acc-person{display:flex;flex-direction:column;padding-left:42px}
 .acc-person small{color:var(--muted);font-size:12px}
+
+/* ---------- プロフィール写真 ---------- */
+img.dot.avatar{object-fit:cover;background:var(--sunk)}
+.avatar-edit{display:flex;gap:18px;align-items:center;padding-bottom:6px;border-bottom:1px solid var(--line-soft)}
+.avatar-big{position:relative;width:96px;height:96px;border-radius:50%;border:0;padding:0;cursor:pointer;flex:none;display:grid;place-items:center;color:#fff;font-size:38px;font-weight:700;overflow:visible}
+.avatar-big img{width:100%;height:100%;border-radius:50%;object-fit:cover}
+.avatar-big>span:first-child{line-height:1}
+.avatar-cam{position:absolute;right:-2px;bottom:-2px;width:32px;height:32px;border-radius:50%;background:var(--surface);color:var(--ink);display:grid;place-items:center;box-shadow:var(--shadow-sm);border:1px solid var(--line-soft)}
+.avatar-big:hover .avatar-cam{background:var(--sunk)}
+.avatar-side{display:flex;flex-direction:column;gap:6px;min-width:0}
+.avatar-side b{font-size:14px}

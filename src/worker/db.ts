@@ -51,7 +51,7 @@ function plausibleDate(v: unknown) {
 // ---------- 行 → 画面のデータ ----------
 const toDoc = {
 	households: (r: Row) => ({ id: r.id, name: r.name, district: r.district, note: r.note, createdAt: r.created_at, updatedAt: r.updated_at }),
-	people: (r: Row) => ({ id: r.id, householdId: r.household_id, name: r.name, relation: r.relation, birthYear: r.birth_year, createdAt: r.created_at, updatedAt: r.updated_at }),
+	people: (r: Row) => ({ id: r.id, householdId: r.household_id, name: r.name, relation: r.relation, birthYear: r.birth_year, avatar: r.avatar ?? null, createdAt: r.created_at, updatedAt: r.updated_at }),
 	jobs: (r: Row) => ({ id: r.id, owner: r.owner, title: r.title, desc: r.description, price: r.price, negotiable: !!r.negotiable, active: !!r.active, createdAt: r.created_at, updatedAt: r.updated_at }),
 	items: (r: Row) => ({ id: r.id, owner: r.owner, name: r.name, desc: r.description, priceStone: r.price_stone, priceYen: r.price_yen, photos: parseArr(r.photos), status: r.status, ...(r.buyer ? { buyer: r.buyer } : {}), ...(r.done_at ? { doneAt: r.done_at } : {}), createdAt: r.created_at, updatedAt: r.updated_at }),
 	posts: (r: Row) => ({
@@ -139,9 +139,9 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 				case "people":
 					if (!ok(d.householdId) || !str(d.name, 100)) continue;
 					// 世帯（household_id）は後から変えられない
-					p(`INSERT INTO people (id,household_id,name,relation,birth_year,created_at,updated_at) VALUES (?,?,?,?,?,?,?)
-					   ON CONFLICT(id) DO UPDATE SET name=excluded.name, relation=excluded.relation, birth_year=excluded.birth_year, updated_at=excluded.updated_at`,
-					d.id, d.householdId, str(d.name, 100), str(d.relation, 20), str(d.birthYear, 10), created, now);
+					p(`INSERT INTO people (id,household_id,name,relation,birth_year,avatar,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)
+					   ON CONFLICT(id) DO UPDATE SET name=excluded.name, relation=excluded.relation, birth_year=excluded.birth_year, avatar=excluded.avatar, updated_at=excluded.updated_at`,
+					d.id, d.householdId, str(d.name, 100), str(d.relation, 20), str(d.birthYear, 10), ok(d.avatar) ? d.avatar : null, created, now);
 					break;
 				case "jobs":
 					if (!ok(d.owner)) continue;
