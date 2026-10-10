@@ -4,7 +4,7 @@
  * - パスワード: PBKDF2-SHA256（Web Crypto）でハッシュ化。ソルトは毎回ランダム
  * - ログイン状態: ランダムなトークンを HttpOnly Cookie に入れ、KV に「トークンのハッシュ → 世帯」を保存（30日で自動失効）
  * - アカウント本体（ログインID・ハッシュ・権限・停止）は D1 の accounts 表
- * - ログイン失敗が続いたら KV のカウンターで一時的にロック
+ * - ログイン失敗が続いたら D1 のカウンターで一時的にロック（同時アクセスでも回数が抜けない）
  */
 
 export type AuthEnv = {
@@ -20,7 +20,6 @@ export const COOKIE = "kaga_sess";
 const SESSION_TTL = 60 * 60 * 24 * 30; // 30日
 /** Workers の Web Crypto で使える PBKDF2 の上限回数 */
 const PBKDF2_ITER = 100_000;
-const LOCK_LIMIT = 10; // 15分間にこの回数失敗したらロック
 const LOCK_TTL = 15 * 60;
 export const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -102,7 +101,9 @@ export function cookieOf(request: Request, name = COOKIE) {
 	const raw = request.headers.get("Cookie") ?? "";
 	for (const part of raw.split(";")) {
 		const [k, ...v] = part.trim().split("=");
-		if (k === name) return decodeURIComponent(v.join("="));
+		if (k === name) {
+			try { return decodeURIComponent(v.join("=")); } catch { return null; }
+		}
 	}
 	return null;
 }
@@ -132,16 +133,32 @@ export async function currentSession(env: AuthEnv, request: Request): Promise<Se
 }
 
 // ---------- ログイン失敗の制限 ----------
-export async function isLocked(env: AuthEnv, keys: string[]) {
-	const vals = await Promise.all(keys.map((k) => env.AUTH.get("rl:" + k)));
-	return vals.some((v) => Number(v ?? 0) >= LOCK_LIMIT);
+// KV の「読んでから書く」は同時リクエストで回数が抜ける。D1 の1文で足す。
+const rateKey = (key: string) => key.slice(0, 200);
+
+/** 1回分を足す。上限を超えていたら true */
+export async function rateLimit(env: AuthEnv, key: string, limit: number, windowSec = LOCK_TTL): Promise<boolean> {
+	const now = Date.now();
+	const row = await env.DB.prepare(
+		`INSERT INTO rate_limits (key, n, reset_at) VALUES (?, 1, ?)
+		 ON CONFLICT(key) DO UPDATE SET
+		   n = CASE WHEN rate_limits.reset_at <= ? THEN 1 ELSE rate_limits.n + 1 END,
+		   reset_at = CASE WHEN rate_limits.reset_at <= ? THEN excluded.reset_at ELSE rate_limits.reset_at END
+		 RETURNING n`,
+	).bind(rateKey(key), now + windowSec * 1000, now, now).first<{ n: number }>();
+	if (!row) throw new Error("rate limit");
+	return row.n > limit;
 }
-export async function recordFailure(env: AuthEnv, keys: string[]) {
-	await Promise.all(keys.map(async (k) => {
-		const n = Number((await env.AUTH.get("rl:" + k)) ?? 0) + 1;
-		await env.AUTH.put("rl:" + k, String(n), { expirationTtl: LOCK_TTL });
-	}));
+
+export async function clearRate(env: AuthEnv, key: string) {
+	await env.DB.prepare("DELETE FROM rate_limits WHERE key = ?").bind(rateKey(key)).run();
 }
-export async function clearFailures(env: AuthEnv, keys: string[]) {
-	await Promise.all(keys.map((k) => env.AUTH.delete("rl:" + k)));
+
+/** 長さが違っても比較時間が変わらない（初期設定コード用） */
+export async function sameSecret(a: string, b: string) {
+	const [ha, hb] = await Promise.all([
+		crypto.subtle.digest("SHA-256", enc.encode(a)),
+		crypto.subtle.digest("SHA-256", enc.encode(b)),
+	]);
+	return sameBytes(new Uint8Array(ha), new Uint8Array(hb));
 }

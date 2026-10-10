@@ -1,7 +1,7 @@
 import { handleAdmin, handleAuth, handleFamily } from "./accounts";
-import { currentSession } from "./auth";
+import { currentSession, rateLimit } from "./auth";
 import { authorize, buildStatements, sync, type Op } from "./db";
-import { Notifier } from "./notifier";
+import { NOTIFY_OK, Notifier } from "./notifier";
 
 export { Notifier };
 
@@ -26,16 +26,34 @@ const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_PHOTO = 3 * 1024 * 1024;
 
 const json = (data: unknown, status = 200) =>
-	new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" } });
+	new Response(JSON.stringify(data), {
+		status,
+		headers: {
+			"Content-Type": "application/json; charset=utf-8",
+			"Cache-Control": "no-store",
+			"X-Content-Type-Options": "nosniff",
+			"X-Frame-Options": "DENY",
+			"Referrer-Policy": "no-referrer",
+			"Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+		},
+	});
 
 const notifier = (env: AppEnv) => env.NOTIFIER.get(env.NOTIFIER.idFromName("main"));
 const notify = (env: AppEnv, ctx: ExecutionContext, at: number) =>
-	ctx.waitUntil(notifier(env).fetch("https://notifier/notify", { method: "POST", body: JSON.stringify({ type: "changed", at }) }));
+	ctx.waitUntil(notifier(env).fetch("https://notifier/notify", { method: "POST", headers: { "X-Kaga-Notify": NOTIFY_OK }, body: JSON.stringify({ type: "changed", at }) }));
 
-/** 別サイトからの書き込み（CSRF）を防ぐ：Origin が自分と違えば拒否 */
+/** 別サイトからの書き込み（CSRF）を防ぐ。Origin が無いリクエストも拒否する */
 function sameOrigin(request: Request, url: URL) {
-	const origin = request.headers.get("Origin");
-	return !origin || origin === url.origin;
+	return request.headers.get("Origin") === url.origin;
+}
+
+/** 中身の先頭バイトで JPEG / PNG / WebP かを決める。Content-Type ヘッダーは信用しない */
+function sniffImage(buf: ArrayBuffer): "image/jpeg" | "image/png" | "image/webp" | null {
+	const b = new Uint8Array(buf);
+	if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+	if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 && b[4] === 0x0d && b[5] === 0x0a && b[6] === 0x1a && b[7] === 0x0a) return "image/png";
+	if (b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return "image/webp";
+	return null;
 }
 
 export default {
@@ -70,13 +88,18 @@ export default {
 
 			// 差分同期（相談・既読はログイン中の人の分だけ）
 			if (path === "/api/sync" && request.method === "GET") {
-				const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
-				return json(await sync(env.DB, since, s.userId));
+				const rawSince = Number(url.searchParams.get("since"));
+				const since = Number.isFinite(rawSince) ? Math.max(0, rawSince) : 0;
+				return json(await sync(env.DB, since, s.userId, s.householdId));
 			}
 
 			// 変更
 			if (path === "/api/ops" && request.method === "POST") {
-				const body = (await request.json().catch(() => null)) as { ops?: Op[] } | null;
+				if (await rateLimit(env, "ops:" + s.userId, 240)) return json({ error: "しばらく時間をおいてから試してください。" }, 429);
+				const raw = await request.text();
+				if (raw.length > 300_000) return json({ error: "送信データが大きすぎます" }, 413);
+				let body: { ops?: Op[] } | null = null;
+				try { body = JSON.parse(raw) as { ops?: Op[] }; } catch { body = null; }
 				if (!body || !Array.isArray(body.ops)) return json({ error: "bad request" }, 400);
 				const now = Date.now();
 				const allowed = await authorize(env.DB, body.ops.slice(0, 200), s);
@@ -88,10 +111,23 @@ export default {
 
 			// リアルタイム通知（WebSocket）
 			if (path === "/api/ws") {
-				return notifier(env).fetch(new Request("https://notifier/ws", request));
+				if (request.headers.get("Origin") !== url.origin) return json({ error: "forbidden" }, 403);
+				return notifier(env).fetch(new Request(`https://notifier/ws/${encodeURIComponent(s.userId)}`, request));
 			}
 
 			// 写真（R2）。表示はログイン中なら誰でも、削除はアップロードした人か管理者だけ
+			if (path === "/api/photo" && request.method === "POST") {
+				if (await rateLimit(env, "photo:" + s.userId, 60, 24 * 60 * 60)) return json({ error: "画像のアップロードが多すぎます。時間をおいて試してください。" }, 429);
+				const len = Number(request.headers.get("Content-Length") || 0);
+				if (len > MAX_PHOTO) return json({ error: "画像が大きすぎます" }, 413);
+				const buf = await request.arrayBuffer();
+				if (buf.byteLength === 0 || buf.byteLength > MAX_PHOTO) return json({ error: "画像が大きすぎます" }, 413);
+				const type = sniffImage(buf);
+				if (!type) return json({ error: "画像は JPEG / PNG / WebP のみです" }, 415);
+				const id = "p_" + [...crypto.getRandomValues(new Uint8Array(16))].map((x) => x.toString(16).padStart(2, "0")).join("");
+				await env.PHOTOS.put("photos/" + id, buf, { httpMetadata: { contentType: type }, customMetadata: { owner: s.userId } });
+				return json({ id });
+			}
 			const photo = path.match(/^\/api\/photo\/([^/]+)$/);
 			if (photo) {
 				const id = photo[1];
@@ -100,17 +136,19 @@ export default {
 				if (request.method === "GET") {
 					const obj = await env.PHOTOS.get(key);
 					if (!obj) return new Response("Not found", { status: 404 });
-					return new Response(obj.body, { headers: { "Content-Type": obj.httpMetadata?.contentType ?? "image/jpeg", "Cache-Control": "private, max-age=31536000, immutable", ETag: obj.httpEtag } });
+					const ctype = obj.httpMetadata?.contentType ?? "";
+					return new Response(obj.body, {
+						headers: {
+							"Content-Type": PHOTO_TYPES.has(ctype) ? ctype : "application/octet-stream",
+							"Cache-Control": "private, max-age=31536000, immutable",
+							"X-Content-Type-Options": "nosniff",
+							"Content-Security-Policy": "default-src 'none'; sandbox",
+							"Content-Disposition": "inline",
+							ETag: obj.httpEtag,
+						},
+					});
 				}
-				if (request.method === "PUT") {
-					const type = (request.headers.get("Content-Type") ?? "").split(";")[0].trim();
-					if (!PHOTO_TYPES.has(type)) return json({ error: "画像は JPEG / PNG / WebP のみです" }, 415);
-					const buf = await request.arrayBuffer();
-					if (buf.byteLength === 0 || buf.byteLength > MAX_PHOTO) return json({ error: "画像が大きすぎます" }, 413);
-					if (await env.PHOTOS.head(key)) return json({ error: "exists" }, 409);
-					await env.PHOTOS.put(key, buf, { httpMetadata: { contentType: type }, customMetadata: { owner: s.userId } });
-					return json({ ok: true });
-				}
+				if (request.method === "PUT") return json({ error: "この方法ではアップロードできません" }, 405);
 				if (request.method === "DELETE") {
 					const head = await env.PHOTOS.head(key);
 					if (head && (head.customMetadata?.owner === s.userId || s.role === "admin")) await env.PHOTOS.delete(key);

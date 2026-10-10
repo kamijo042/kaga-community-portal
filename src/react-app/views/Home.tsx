@@ -9,7 +9,7 @@ import { ago } from "../lib/util";
 import { AccountsAdmin, InviteCodeModal } from "./Admin";
 
 export function HomeView() {
-	const { d, me } = useData();
+	const { d, me, user } = useData();
 	const { openModal, toast } = useApp();
 	const hid = householdOf(d, me);
 	const [accs, setAccs] = useState<Record<string, AccountRow>>({});
@@ -58,6 +58,7 @@ export function HomeView() {
 						{fam.map((p) => {
 							const a = accs[p.id];
 							const age = ageBucket(p.birthYear);
+							const resetBlocked = a?.role === "admin" && user?.role !== "admin" && !!a.loginId;
 							return (
 								<div className="fam-row" key={p.id} data-person={p.name}>
 									<Dot id={p.id} />
@@ -70,9 +71,10 @@ export function HomeView() {
 										</span>
 									</div>
 									<div className="fam-acts">
-										{p.id !== me && (
+										{p.id !== me && !resetBlocked && (
 											<button className="btn small" onClick={() => issue(p.id, p.name)}>{a?.loginId ? "再設定コード" : a?.inviteExpiresAt ? "招待コードを再発行" : "ログインを発行"}</button>
 										)}
+										{resetBlocked && <span className="muted">再設定は管理者へ</span>}
 										<button className="btn small ghost" onClick={() => openModal(<PersonForm householdId={hid} existing={p} hasLogin={!!a?.loginId} />)}>編集</button>
 									</div>
 								</div>

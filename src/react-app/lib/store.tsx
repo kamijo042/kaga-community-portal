@@ -2,7 +2,6 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { api, authApi, setUnauthorizedHandler, type User } from "./api";
 import { applySync, diffOps, type SyncResult } from "./sync";
 import { emptyState, type State } from "./types";
-import { uid } from "./util";
 
 /**
  * ログイン状態・データの読み書き・リアルタイム同期
@@ -10,7 +9,7 @@ import { uid } from "./util";
  * - データ本体は D1。/api/sync?since=… で「前回より後に変わった行」だけを受け取る
  * - 変更は操作（ops）にして /api/ops へ送る（サーバーで権限を確認）
  * - Durable Object の WebSocket（/api/ws）から「変わったよ」が届いたら差分を取りに行く
- * - 写真は R2（/api/photo/:id）
+ * - 写真は R2（POST /api/photo でIDを決め、GET /api/photo/:id で表示）
  */
 
 export type SyncStatus = "loading" | "login" | "setup" | "ready" | "offline";
@@ -165,11 +164,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
 	const photos = useMemo(() => ({
 		url: (pid: string) => `/api/photo/${encodeURIComponent(pid)}`,
 		async put(dataUrl: string) {
-			const pid = uid("p_");
 			const blob = await (await fetch(dataUrl)).blob();
-			const r = await api("/api/photo/" + pid, { method: "PUT", headers: { "Content-Type": blob.type || "image/jpeg" }, body: blob });
+			const r = await api("/api/photo", { method: "POST", headers: { "Content-Type": blob.type || "image/jpeg" }, body: blob });
 			if (!r.ok) throw new Error("画像を保存できませんでした");
-			return pid;
+			const data = (await r.json().catch(() => null)) as { id?: string } | null;
+			if (!data?.id) throw new Error("画像を保存できませんでした");
+			return data.id;
 		},
 		del(pid: string) {
 			void api("/api/photo/" + pid, { method: "DELETE" }).catch(() => undefined);

@@ -41,6 +41,15 @@ export function dayLabel(ds: string) {
 	return `${d.getMonth() + 1}/${d.getDate()}（${WD[d.getDay()]}）`;
 }
 
+/** http / https 以外（javascript: など）はリンクにしない */
+export function safeHttpUrl(v: string): string | null {
+	try {
+		const u = new URL(v);
+		if ((u.protocol !== "http:" && u.protocol !== "https:") || u.username || u.password) return null;
+		return u.href;
+	} catch { return null; }
+}
+
 /** 0以上の整数か（空文字は false） */
 export const isWhole = (v: string) => v.trim() !== "" && Number.isInteger(+v) && +v >= 0;
 

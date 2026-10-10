@@ -6,7 +6,7 @@ import { useApp } from "../lib/app";
 import { evDateStr, evPast, evStart, familySize, forMyKids, goCount, hhLabel, householdOf, matchesFamily, myBuckets, nameOf } from "../lib/domain";
 import { useData } from "../lib/store";
 import type { Post, PostCat } from "../lib/types";
-import { ago, WD } from "../lib/util";
+import { ago, WD, safeHttpUrl } from "../lib/util";
 
 function DateBox({ p }: { p: Post }) {
 	const d = evStart(p);
@@ -130,6 +130,7 @@ export function PostDetail({ id }: { id: string }) {
 	const g = goCount(p);
 	const my = p.rsvps?.[hid];
 	const past = evPast(p);
+	const href = p.link ? safeHttpUrl(p.link) : null;
 	const full = !!p.event?.capacity && g.people >= p.event.capacity && my?.s !== "go";
 	const goers = Object.entries(p.rsvps ?? {}).filter(([, x]) => x.s === "go");
 
@@ -174,7 +175,7 @@ export function PostDetail({ id }: { id: string }) {
 			)}
 			{p.cat !== "event" && p.targets?.length > 0 && <p style={{ fontSize: 13, color: "var(--muted)" }}>対象：{p.targets.join("・")}</p>}
 			{p.body && <p className="detail-desc">{p.body}</p>}
-			{p.link && <p style={{ fontSize: 14, wordBreak: "break-all" }}>参考リンク：<a href={p.link} target="_blank" rel="noopener noreferrer">{p.link}</a></p>}
+			{href && <p style={{ fontSize: 14, wordBreak: "break-all" }}>参考リンク：<a href={href} target="_blank" rel="noopener noreferrer">{p.link}</a></p>}
 			{p.cat === "event" && (
 				<div className="rsvp">
 					<div className="rs-row">

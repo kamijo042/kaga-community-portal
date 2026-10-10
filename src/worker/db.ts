@@ -14,9 +14,39 @@ const str = (v: unknown, max = 5000) => (typeof v === "string" ? v.slice(0, max)
 const int = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null);
 const intOr = (v: unknown, d: number) => int(v) ?? d;
 const bool = (v: unknown) => (v ? 1 : 0);
-const jsonArr = (v: unknown) => JSON.stringify(Array.isArray(v) ? v : []);
 const parseArr = (v: unknown) => { try { const x = JSON.parse(String(v ?? "[]")); return Array.isArray(x) ? x : []; } catch { return []; } };
 const ok = (id: unknown): id is string => typeof id === "string" && SAFE_ID.test(id);
+const STONE_MAX = 1_000_000;
+const PEOPLE_MAX = 40;
+const CONTENT_MAX = 200;
+const PHOTO_ID = /^[A-Za-z0-9_-]{1,80}$/;
+const stone = (v: unknown) => Math.min(STONE_MAX, Math.max(0, intOr(v, 0)));
+const stoneOrNull = (v: unknown) => { const n = int(v); return n === null ? null : Math.min(STONE_MAX, Math.max(0, n)); };
+/** http / https だけ通す。javascript: などは空にする */
+function httpUrl(v: unknown, max = 500) {
+	const s = str(v, max);
+	if (!s) return "";
+	try {
+		const u = new URL(s);
+		if ((u.protocol !== "http:" && u.protocol !== "https:") || u.username || u.password) return "";
+		return u.href;
+	} catch { return ""; }
+}
+function photoList(v: unknown) {
+	const ids = Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && PHOTO_ID.test(x)).slice(0, 6) : [];
+	return JSON.stringify(ids);
+}
+function shortList(v: unknown, maxItems: number, maxLen: number) {
+	const xs = Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").map((x) => x.slice(0, maxLen)).filter(Boolean).slice(0, maxItems) : [];
+	return JSON.stringify(xs);
+}
+/** 流通の日付。未来すぎる日や壊れた文字列は拒否する */
+function plausibleDate(v: unknown) {
+	const s = String(v ?? "");
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+	const t = Date.parse(s + "T00:00:00Z");
+	return Number.isFinite(t) && t >= Date.parse("2020-01-01T00:00:00Z") && t <= Date.now() + 36 * 60 * 60 * 1000;
+}
 
 // ---------- 行 → 画面のデータ ----------
 const toDoc = {
@@ -42,9 +72,10 @@ export type Table = keyof typeof toDoc;
  * since（ミリ秒）より後に変わった行を返す。
  * 相談・メッセージ・既読は、ログイン中の人（me）が関わるものだけを返す。
  */
-export async function sync(db: D1Database, since: number, me: string | null) {
+export async function sync(db: D1Database, since: number, me: string | null, myHome: string | null) {
 	const now = Date.now();
 	const mine = ok(me) ? me : "";
+	const home = ok(myHome) ? myHome : "";
 	const q = (sql: string, ...binds: unknown[]) => db.prepare(sql).bind(...binds);
 	const res = await db.batch([
 		q("SELECT * FROM households WHERE updated_at > ?", since),
@@ -65,7 +96,13 @@ export async function sync(db: D1Database, since: number, me: string | null) {
 	const rows: Record<string, unknown[]> = {};
 	tables.forEach((t, i) => {
 		const conv = toDoc[t] as (r: Row) => Doc;
-		rows[t] = ((res[i].results ?? []) as Row[]).map((r) => conv(r));
+		rows[t] = ((res[i].results ?? []) as Row[]).map((r) => {
+			const doc = conv(r);
+			// 連絡メモ・生まれ年・続柄は自分の世帯だけ。画面でも他世帯には出していない
+			if (t === "households" && doc.id !== home) doc.note = "";
+			if (t === "people" && doc.householdId !== home) { doc.birthYear = ""; doc.relation = ""; }
+			return doc;
+		});
 	});
 	const deleted = (res[11].results ?? []) as { tbl: string; id: string }[];
 	return { now, rows, deleted };
@@ -111,53 +148,59 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 					p(`INSERT INTO jobs (id,owner,title,description,price,negotiable,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)
 					   ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description, price=excluded.price,
 					   negotiable=excluded.negotiable, active=excluded.active, updated_at=excluded.updated_at`,
-					d.id, d.owner, str(d.title, 100), str(d.desc), Math.max(0, intOr(d.price, 0)), bool(d.negotiable), bool(d.active), created, now);
+					d.id, d.owner, str(d.title, 100), str(d.desc), stone(d.price), bool(d.negotiable), bool(d.active), created, now);
 					break;
 				case "items":
 					if (!ok(d.owner)) continue;
 					p(`INSERT INTO items (id,owner,name,description,price_stone,price_yen,photos,status,buyer,done_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
 					   ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, price_stone=excluded.price_stone,
 					   price_yen=excluded.price_yen, photos=excluded.photos, status=excluded.status, buyer=excluded.buyer, done_at=excluded.done_at, updated_at=excluded.updated_at`,
-					d.id, d.owner, str(d.name, 100), str(d.desc), int(d.priceStone), int(d.priceYen), jsonArr(d.photos),
+					d.id, d.owner, str(d.name, 100), str(d.desc), stoneOrNull(d.priceStone), stoneOrNull(d.priceYen), photoList(d.photos),
 					["open", "nego", "done"].includes(String(d.status)) ? d.status : "open", ok(d.buyer) ? d.buyer : null, int(d.doneAt), created, now);
 					break;
 				case "posts": {
 					if (!ok(d.owner) || !["edu", "farm", "event"].includes(String(d.cat))) continue;
 					const ev = (d.cat === "event" && d.event && typeof d.event === "object" ? d.event : {}) as Doc;
+					const cap = int(ev.capacity);
 					p(`INSERT INTO posts (id,owner,cat,kind,title,body,link,targets,photo,ev_date,ev_start,ev_end,ev_place,ev_capacity,ev_bring,created_at,updated_at)
 					   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 					   ON CONFLICT(id) DO UPDATE SET cat=excluded.cat, kind=excluded.kind, title=excluded.title, body=excluded.body, link=excluded.link,
 					   targets=excluded.targets, photo=excluded.photo, ev_date=excluded.ev_date, ev_start=excluded.ev_start, ev_end=excluded.ev_end,
 					   ev_place=excluded.ev_place, ev_capacity=excluded.ev_capacity, ev_bring=excluded.ev_bring, updated_at=excluded.updated_at`,
-					d.id, d.owner, d.cat, str(d.kind, 50), str(d.title, 120), str(d.body), str(d.link, 500), jsonArr(d.targets), ok(d.photo) ? d.photo : null,
+					d.id, d.owner, d.cat, str(d.kind, 50), str(d.title, 120), str(d.body), httpUrl(d.link), shortList(d.targets, 12, 40), ok(d.photo) ? d.photo : null,
 					d.cat === "event" ? str(ev.date, 10) || null : null, d.cat === "event" ? str(ev.start, 5) : null, d.cat === "event" ? str(ev.end, 5) : null,
-					d.cat === "event" ? str(ev.place, 200) : null, d.cat === "event" ? int(ev.capacity) : null, d.cat === "event" ? str(ev.bring, 200) : null, created, now);
+					d.cat === "event" ? str(ev.place, 200) : null, d.cat === "event" && cap !== null ? Math.min(10000, Math.max(0, cap)) : null, d.cat === "event" ? str(ev.bring, 200) : null, created, now);
 					break;
 				}
 				case "threads":
 					if (!ok(d.owner) || !ok(d.other) || !ok(d.refId) || !["job", "item", "info"].includes(String(d.kind))) continue;
-					// 最終メッセージの情報は、新しい方だけで上書きする
-					p(`INSERT INTO threads (id,kind,ref_id,owner,other,title,last_at,last_by,last_text,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
-					   ON CONFLICT(id) DO UPDATE SET title=excluded.title,
-					   last_by   = CASE WHEN excluded.last_at >= threads.last_at THEN excluded.last_by   ELSE threads.last_by   END,
-					   last_text = CASE WHEN excluded.last_at >= threads.last_at THEN excluded.last_text ELSE threads.last_text END,
-					   last_at   = MAX(threads.last_at, excluded.last_at), updated_at=excluded.updated_at`,
-					d.id, d.kind, d.refId, d.owner, d.other, str(d.title, 120), intOr(d.lastAt, 0), ok(d.lastBy) ? d.lastBy : null, str(d.lastText, 300), created, now);
+					// プレビュー文はメッセージ保存時だけ更新する。クライアントの lastText は信用しない
+					p(`INSERT INTO threads (id,kind,ref_id,owner,other,title,last_at,last_by,last_text,created_at,updated_at) VALUES (?,?,?,?,?,?,0,NULL,'',?,?)
+					   ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at`,
+					d.id, d.kind, d.refId, d.owner, d.other, str(d.title, 120), created, now);
 					break;
 				case "ledger":
 					if (!ok(d.from) || !ok(d.to) || !ok(d.tid) || !ok(d.refId) || !["job", "item"].includes(String(d.kind))) continue;
-					if (!/^\d{4}-\d{2}-\d{2}$/.test(String(d.date))) continue;
-					p(`INSERT INTO ledger (id,date,kind,ref_id,thread_id,payer,payee,amount,title,recorded_by,recorded_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-					   ON CONFLICT(id) DO UPDATE SET date=excluded.date, amount=excluded.amount, title=excluded.title, updated_at=excluded.updated_at`,
-					d.id, d.date, d.kind, d.refId, d.tid, d.from, d.to, Math.max(0, intOr(d.amount, 0)), str(d.title, 120), ok(d.by) ? d.by : "", intOr(d.at, now), now);
+					if (!plausibleDate(d.date)) continue;
+					// 既存の行は書き換えない（金額の改ざんを防ぐ）。同じ内容の再送は無視される
+					p(`INSERT OR IGNORE INTO ledger (id,date,kind,ref_id,thread_id,payer,payee,amount,title,recorded_by,recorded_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+					d.id, d.date, d.kind, d.refId, d.tid, d.from, d.to, stone(d.amount), str(d.title, 120), ok(d.by) ? d.by : "", intOr(d.at, now), now);
 					break;
 			}
 			untomb(op.tbl, d.id as string);
 		} else if (op.t === "message") {
 			const d = op.doc ?? {};
 			if (!ok(d.id) || !ok(d.threadId) || !ok(d.from) || typeof d.text !== "string" || !d.text) continue;
-			p("INSERT OR IGNORE INTO messages (id,thread_id,sender,text,sys,sent_at,updated_at) VALUES (?,?,?,?,?,?,?)",
-				d.id, d.threadId, d.from, str(d.text, 4000), bool(d.sys), intOr(d.t, now), now);
+			const text = str(d.text, 4000);
+			const preview = text.replace(/\s+/g, " ").slice(0, 300);
+			// 時刻はサーバーのものだけ使う。未来の時刻でプレビューを固定できない
+			p("INSERT OR IGNORE INTO messages (id,thread_id,sender,text,sys,sent_at,updated_at) VALUES (?,?,?,?,0,?,?)",
+				d.id, d.threadId, d.from, text, now, now);
+			p(`UPDATE threads SET
+			   last_by = CASE WHEN ? >= threads.last_at THEN ? ELSE threads.last_by END,
+			   last_text = CASE WHEN ? >= threads.last_at THEN ? ELSE threads.last_text END,
+			   last_at = MAX(threads.last_at, ?), updated_at = ? WHERE id = ?`,
+			now, d.from, now, preview, now, now, d.threadId);
 		} else if (op.t === "rsvp") {
 			if (!ok(op.postId) || !ok(op.householdId) || !["go", "maybe"].includes(op.s)) continue;
 			p(`INSERT INTO rsvps (post_id,household_id,status,people,updated_at) VALUES (?,?,?,?,?)
@@ -170,17 +213,20 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 			p("INSERT OR REPLACE INTO tombstones (tbl,id,deleted_at) VALUES ('rsvps',?,?)", `${op.postId}|${op.householdId}`, now);
 		} else if (op.t === "read") {
 			if (!ok(op.userId) || !ok(op.threadId)) continue;
+			const at = Math.min(now, Math.max(0, intOr(op.at, now)));
 			p(`INSERT INTO reads (user_id,thread_id,read_at,updated_at) VALUES (?,?,?,?)
 			   ON CONFLICT(user_id,thread_id) DO UPDATE SET read_at=MAX(reads.read_at, excluded.read_at), updated_at=excluded.updated_at`,
-			op.userId, op.threadId, intOr(op.at, now), now);
+			op.userId, op.threadId, at, now);
 		} else if (op.t === "seen") {
 			if (!ok(op.userId)) continue;
+			const at = Math.min(now, Math.max(0, intOr(op.at, now)));
 			p(`INSERT INTO seen (user_id,seen_at,updated_at) VALUES (?,?,?)
 			   ON CONFLICT(user_id) DO UPDATE SET seen_at=MAX(seen.seen_at, excluded.seen_at), updated_at=excluded.updated_at`,
-			op.userId, intOr(op.at, now), now);
+			op.userId, at, now);
 		} else if (op.t === "delete") {
 			if (!DELETABLE.has(op.tbl) || !ok(op.id)) continue;
 			p(`DELETE FROM ${op.tbl} WHERE id = ?`, op.id);
+			if (op.tbl === "people") p("UPDATE invites SET used_at = ? WHERE user_id = ? AND used_at IS NULL", now, op.id);
 			if (op.tbl === "posts") p("DELETE FROM rsvps WHERE post_id = ?", op.id);
 			p("INSERT OR REPLACE INTO tombstones (tbl,id,deleted_at) VALUES (?,?,?)", op.tbl, op.id, now);
 		}
@@ -190,9 +236,9 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 
 // ---------- 権限チェック ----------
 type Who = { userId: string; householdId: string; role: "member" | "admin" };
-type OwnerRow = { id: string; owner: string };
+type RefRow = { id: string; owner: string; title: string; cat: string | null };
 type ThreadRow = { id: string; kind: string; owner: string; other: string };
-type LedgerRow = { id: string; thread_id: string; kind: string };
+type LedgerRow = { id: string; thread_id: string; kind: string; payer: string; payee: string; amount: number; date: string; title: string; recorded_by: string };
 
 async function selectIn<T>(db: D1Database, sql: (ph: string) => string, ids: string[]): Promise<T[]> {
 	const out: T[] = [];
@@ -224,6 +270,9 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 	]);
 	const personHome = new Map(peopleRows.map((r) => [r.id, r.household_id]));
 	const hasLogin = new Set(accountRows.map((r) => r.user_id));
+	const newHomes = [...new Set(ops.flatMap((op) => (op.t === "upsert" && op.tbl === "people" && ok(op.doc?.id) && !personHome.has(op.doc.id as string) && ok(op.doc.householdId) ? [op.doc.householdId as string] : [])))];
+	const homeRows = await selectIn<{ household_id: string; n: number }>(db, (p) => `SELECT household_id, COUNT(*) AS n FROM people WHERE household_id IN (${p}) GROUP BY household_id`, newHomes);
+	const homeCount = new Map(homeRows.map((r) => [r.household_id, Number(r.n)]));
 	const ids = { jobs: new Set<string>(), items: new Set<string>(), posts: new Set<string>(), threads: new Set<string>(), ledger: new Set<string>() };
 	for (const op of ops) {
 		if (op.t === "upsert" && op.tbl in ids && ok(op.doc?.id)) {
@@ -235,20 +284,24 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 			}
 		}
 		if (op.t === "delete" && op.tbl in ids && ok(op.id)) ids[op.tbl as keyof typeof ids].add(op.id);
+		if ((op.t === "rsvp" || op.t === "unrsvp") && ok(op.postId)) ids.posts.add(op.postId);
 		if (op.t === "message" && ok(op.doc?.threadId)) ids.threads.add(op.doc.threadId as string);
 	}
-	const [jobs, items, posts, threads, ledger] = await Promise.all([
-		selectIn<OwnerRow>(db, (p) => `SELECT id, owner FROM jobs WHERE id IN (${p})`, [...ids.jobs]),
-		selectIn<OwnerRow>(db, (p) => `SELECT id, owner FROM items WHERE id IN (${p})`, [...ids.items]),
-		selectIn<OwnerRow>(db, (p) => `SELECT id, owner FROM posts WHERE id IN (${p})`, [...ids.posts]),
+	const [jobs, items, posts, threads, ledger, caps] = await Promise.all([
+		selectIn<RefRow>(db, (p) => `SELECT id, owner, title, NULL AS cat FROM jobs WHERE id IN (${p})`, [...ids.jobs]),
+		selectIn<RefRow>(db, (p) => `SELECT id, owner, name AS title, NULL AS cat FROM items WHERE id IN (${p})`, [...ids.items]),
+		selectIn<RefRow>(db, (p) => `SELECT id, owner, title, cat FROM posts WHERE id IN (${p})`, [...ids.posts]),
 		selectIn<ThreadRow>(db, (p) => `SELECT id, kind, owner, other FROM threads WHERE id IN (${p})`, [...ids.threads]),
-		selectIn<LedgerRow>(db, (p) => `SELECT id, thread_id, kind FROM ledger WHERE id IN (${p})`, [...ids.ledger]),
+		selectIn<LedgerRow>(db, (p) => `SELECT id, thread_id, kind, payer, payee, amount, date, title, recorded_by FROM ledger WHERE id IN (${p})`, [...ids.ledger]),
+		db.prepare("SELECT (SELECT COUNT(*) FROM jobs WHERE owner = ?) AS jobs, (SELECT COUNT(*) FROM items WHERE owner = ?) AS items, (SELECT COUNT(*) FROM posts WHERE owner = ?) AS posts")
+			.bind(me, me, me).first<{ jobs: number; items: number; posts: number }>(),
 	]);
-	const owner = {
-		jobs: new Map(jobs.map((r) => [r.id, r.owner])),
-		items: new Map(items.map((r) => [r.id, r.owner])),
-		posts: new Map(posts.map((r) => [r.id, r.owner])),
+	const owner: Record<"jobs" | "items" | "posts", Map<string, RefRow>> = {
+		jobs: new Map(jobs.map((r) => [r.id, r])),
+		items: new Map(items.map((r) => [r.id, r])),
+		posts: new Map(posts.map((r) => [r.id, r])),
 	};
+	const made = { jobs: Number(caps?.jobs ?? 0), items: Number(caps?.items ?? 0), posts: Number(caps?.posts ?? 0) };
 	const missing = [...new Set(ledger.map((l) => l.thread_id))].filter((id) => !threads.some((t) => t.id === id));
 	if (missing.length) threads.push(...(await selectIn<ThreadRow>(db, (p) => `SELECT id, kind, owner, other FROM threads WHERE id IN (${p})`, missing)));
 	const thr = new Map(threads.map((r) => [r.id, r]));
@@ -264,13 +317,21 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 				case "households": allow = d.id === myHome || admin; break;
 				case "people": {
 					const home = personHome.get(d.id as string);
-					allow = home ? (home === myHome || admin) && d.householdId === home : d.householdId === myHome;
+					if (home) allow = (home === myHome || admin) && d.householdId === home;
+					else if (d.householdId === myHome && (homeCount.get(myHome) ?? 0) < PEOPLE_MAX) {
+						allow = true;
+						homeCount.set(myHome, (homeCount.get(myHome) ?? 0) + 1);
+					}
 					break;
 				}
 				case "jobs": case "items": case "posts": {
 					const cur = owner[op.tbl].get(d.id as string);
-					allow = cur ? (cur === me || admin) && d.owner === cur : d.owner === me;
-					if (allow && !cur) owner[op.tbl].set(d.id as string, me);
+					if (cur) allow = (cur.owner === me || admin) && d.owner === cur.owner;
+					else if (d.owner === me && made[op.tbl] < CONTENT_MAX) {
+						allow = true;
+						made[op.tbl]++;
+						owner[op.tbl].set(d.id as string, { id: d.id as string, owner: me, title: str(op.tbl === "items" ? d.name : d.title, 120), cat: op.tbl === "posts" ? String(d.cat) : null });
+					}
 					break;
 				}
 				case "threads": {
@@ -278,28 +339,42 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 					if (cur) allow = party(cur);
 					else {
 						const k = d.kind === "job" ? "jobs" : d.kind === "item" ? "items" : "posts";
-						const refOwner = owner[k].get(d.refId as string);
-						allow = d.other === me && !!refOwner && refOwner === d.owner && refOwner !== me;
-						if (allow) thr.set(d.id as string, { id: d.id as string, kind: String(d.kind), owner: refOwner as string, other: me });
+						const ref = owner[k].get(d.refId as string);
+						allow = d.other === me && !!ref && ref.owner === d.owner && ref.owner !== me;
+						if (allow && ref) {
+							d.title = ref.title;
+							thr.set(d.id as string, { id: d.id as string, kind: String(d.kind), owner: ref.owner, other: me });
+						}
 					}
 					break;
 				}
 				case "ledger": {
 					const t = thr.get(d.tid as string);
-					allow = !!t && party(t) && d.by === me && d.from === t.other && d.to === t.owner && d.kind === t.kind && (t.kind !== "item" || t.owner === me);
+					const cur = led.get(d.id as string);
+					const amount = stone(d.amount);
+					const title = str(d.title, 120);
+					if (!plausibleDate(d.date)) break;
+					if (cur) {
+						allow = cur.thread_id === d.tid && cur.kind === String(d.kind) && cur.payer === d.from && cur.payee === d.to
+							&& Number(cur.amount) === amount && cur.date === String(d.date) && cur.title === title && cur.recorded_by === d.by;
+					} else {
+						allow = !!t && party(t) && d.by === me && d.from === t.other && d.to === t.owner && String(d.kind) === t.kind && (t.kind !== "item" || t.owner === me);
+					}
 					break;
 				}
 			}
 		} else if (op.t === "message") {
 			allow = op.doc?.from === me && party(thr.get(op.doc?.threadId as string));
-		} else if (op.t === "rsvp" || op.t === "unrsvp") {
+		} else if (op.t === "rsvp") {
+			allow = op.householdId === myHome && owner.posts.get(op.postId)?.cat === "event";
+		} else if (op.t === "unrsvp") {
 			allow = op.householdId === myHome;
 		} else if (op.t === "read" || op.t === "seen") {
 			allow = op.userId === me;
 		} else if (op.t === "delete") {
 			if (op.tbl === "ledger") { const l = led.get(op.id); allow = !!l && (party(thr.get(l.thread_id)) || admin); }
 			else if (op.tbl === "people") { const home = personHome.get(op.id); allow = !!home && (home === myHome || admin) && !hasLogin.has(op.id) && op.id !== me; }
-			else { const cur = owner[op.tbl].get(op.id); allow = !!cur && (cur === me || admin); }
+			else { const cur = owner[op.tbl].get(op.id); allow = !!cur && (cur.owner === me || admin); }
 		}
 		if (allow) out.push(op);
 	}

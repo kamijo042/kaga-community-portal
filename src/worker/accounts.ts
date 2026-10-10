@@ -1,6 +1,6 @@
 import {
-	INVITE_TTL_MS, burnTime, checkLoginId, clearCookie, clearFailures, cookieOf, createSession, currentSession, destroySession,
-	hashPassword, isLocked, newInviteCode, normalizeCode, passwordProblem, recordFailure, sessionCookie, sha256, verifyPassword,
+	INVITE_TTL_MS, burnTime, checkLoginId, clearCookie, clearRate, cookieOf, createSession, currentSession, destroySession,
+	hashPassword, newInviteCode, normalizeCode, passwordProblem, rateLimit, sessionCookie, sha256, sameSecret, verifyPassword,
 	type AuthEnv, type Session,
 } from "./auth";
 
@@ -17,7 +17,17 @@ type Env = AuthEnv;
 type Body = Record<string, unknown>;
 
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
-	new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...headers } });
+	new Response(JSON.stringify(data), {
+		status,
+		headers: {
+			"Content-Type": "application/json; charset=utf-8",
+			"Cache-Control": "no-store",
+			"X-Content-Type-Options": "nosniff",
+			"X-Frame-Options": "DENY",
+			"Referrer-Policy": "no-referrer",
+			...headers,
+		},
+	});
 const fail = (message: string, status = 400, extra: Body = {}) => json({ error: message, ...extra }, status);
 const str = (v: unknown, max = 200) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 const SAFE_ID = /^[A-Za-z0-9_\-:.]{1,200}$/;
@@ -107,8 +117,8 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 		const b = await readBody(request);
 		if ((await accountCount(env)) > 0) return fail("初期設定はすでに完了しています。", 409);
 		if (!env.ADMIN_SETUP_CODE) return fail("サーバーに ADMIN_SETUP_CODE が設定されていません。README の手順で設定してください。", 503);
-		if (await isLocked(env, ["setup:" + ip])) return fail("しばらく時間をおいてから試してください。", 429);
-		if (str(b.setupCode) !== env.ADMIN_SETUP_CODE) { await recordFailure(env, ["setup:" + ip]); return fail("初期設定コードが違います。", 403); }
+		if (await rateLimit(env, "setup:" + ip, 10)) return fail("しばらく時間をおいてから試してください。", 429);
+		if (!(await sameSecret(str(b.setupCode), env.ADMIN_SETUP_CODE))) return fail("初期設定コードが違います。", 403);
 		const loginId = checkLoginId(b.loginId);
 		if (!loginId) return fail(LOGIN_ID_HELP);
 		const pwErr = passwordProblem(b.password);
@@ -120,12 +130,20 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 		const hid = newId("h_");
 		const uid = newId("u_");
 		const now = Date.now();
-		await env.DB.batch([
-			insertHousehold(env, hid, { ...h, name: defaultHouseholdName(str(h.name, 100), name) }, now),
-			insertPerson(env, uid, hid, { ...person, relation: "世帯主" }, now),
-			env.DB.prepare("INSERT INTO accounts (user_id,household_id,login_id,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-				.bind(uid, hid, loginId, await hashPassword(b.password as string), "admin", now, now),
-		]);
+		try {
+			await env.DB.batch([
+				// 同時に2件来ても、こちらが先に失敗して全部取り消される
+				env.DB.prepare("INSERT INTO app_lock (id, created_at) VALUES ('setup', ?)").bind(now),
+				insertHousehold(env, hid, { ...h, name: defaultHouseholdName(str(h.name, 100), name) }, now),
+				insertPerson(env, uid, hid, { ...person, relation: "世帯主" }, now),
+				env.DB.prepare("INSERT INTO accounts (user_id,household_id,login_id,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+					.bind(uid, hid, loginId, await hashPassword(b.password as string), "admin", now, now),
+			]);
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			if (/unique|constraint/i.test(msg)) return fail("初期設定はすでに完了しています。", 409);
+			throw e;
+		}
 		return json({ ok: true }, 200, { "Set-Cookie": await startSession(env, url, uid) });
 	}
 
@@ -133,16 +151,18 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 		const b = await readBody(request);
 		const loginId = checkLoginId(b.loginId);
 		const password = typeof b.password === "string" ? b.password : "";
-		const keys = ["ip:" + ip, ...(loginId ? ["id:" + loginId] : [])];
-		if (await isLocked(env, keys)) return fail("ログインに続けて失敗したため、15分ほどロックしています。", 429);
+		// IP全体は緩め（同じ回線の人が巻き込まれにくい）。IDごとの試行は厳しく、ただしそのIPからだけ数える
+		if (await rateLimit(env, "login:ip:" + ip, 30)) return fail("ログインに続けて失敗したため、15分ほどロックしています。", 429);
+		const pair = loginId ? "login:" + ip + ":" + loginId : "";
+		if (pair && (await rateLimit(env, pair, 10))) return fail("ログインに続けて失敗したため、15分ほどロックしています。", 429);
 		const acc = loginId
 			? await env.DB.prepare("SELECT user_id, password_hash, disabled FROM accounts WHERE login_id = ?").bind(loginId)
 				.first<{ user_id: string; password_hash: string; disabled: number }>()
 			: null;
 		const ok = acc ? await verifyPassword(password, acc.password_hash) : (await burnTime(password), false);
-		if (!acc || !ok) { await recordFailure(env, keys); return fail("ログインIDかパスワードが違います。", 401); }
+		if (!acc || !ok) return fail("ログインIDかパスワードが違います。", 401);
 		if (acc.disabled) return fail("このアカウントは利用停止中です。運営にお問い合わせください。", 403);
-		await clearFailures(env, ["id:" + loginId]);
+		if (pair) await clearRate(env, pair);
 		return json({ ok: true }, 200, { "Set-Cookie": await startSession(env, url, acc.user_id) });
 	}
 
@@ -154,9 +174,9 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 	// 招待コードの確認（誰あてのコードかを見せる）
 	if (path === "/api/auth/invite" && method === "POST") {
 		const b = await readBody(request);
-		if (await isLocked(env, ["inv:" + ip])) return fail("しばらく時間をおいてから試してください。", 429);
+		if (await rateLimit(env, "inv:" + ip, 30)) return fail("しばらく時間をおいてから試してください。", 429);
 		const inv = await findInvite(env, b.code);
-		if (!inv) { await recordFailure(env, ["inv:" + ip]); return fail("招待コードが正しくないか、期限が切れています。", 404); }
+		if (!inv) return fail("招待コードが正しくないか、期限が切れています。", 404);
 		const p = await env.DB.prepare("SELECT p.name, p.relation, h.name AS household_name, h.district FROM people p JOIN households h ON h.id = p.household_id WHERE p.id = ?")
 			.bind(inv.user_id).first<Body>();
 		const acc = await env.DB.prepare("SELECT login_id FROM accounts WHERE user_id = ?").bind(inv.user_id).first<{ login_id: string }>();
@@ -171,36 +191,45 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 	// 招待コードでログインを作る／パスワードを再設定する
 	if (path === "/api/auth/accept" && method === "POST") {
 		const b = await readBody(request);
-		if (await isLocked(env, ["inv:" + ip])) return fail("しばらく時間をおいてから試してください。", 429);
+		if (await rateLimit(env, "inv:" + ip, 30)) return fail("しばらく時間をおいてから試してください。", 429);
 		const inv = await findInvite(env, b.code);
-		if (!inv) { await recordFailure(env, ["inv:" + ip]); return fail("招待コードが正しくないか、期限が切れています。", 404); }
+		if (!inv) return fail("招待コードが正しくないか、期限が切れています。", 404);
 		const pwErr = passwordProblem(b.password);
 		if (pwErr) return fail(pwErr);
-		const now = Date.now();
-		const hash = await hashPassword(b.password as string);
-		const existing = await env.DB.prepare("SELECT login_id FROM accounts WHERE user_id = ?").bind(inv.user_id).first();
-		const stmts: D1PreparedStatement[] = [env.DB.prepare("UPDATE invites SET used_at = ? WHERE code_hash = ?").bind(now, inv.code_hash)];
-		if (existing) {
-			// パスワード再設定：他の端末のログインもすべて無効にする
-			stmts.push(env.DB.prepare("UPDATE accounts SET password_hash = ?, session_epoch = session_epoch + 1, updated_at = ? WHERE user_id = ?").bind(hash, now, inv.user_id));
-		} else {
-			const loginId = checkLoginId(b.loginId);
+		const person = await env.DB.prepare("SELECT id FROM people WHERE id = ?").bind(inv.user_id).first();
+		if (!person) return fail("招待された人が見つかりません。運営に連絡してください。", 404);
+		const existing = await env.DB.prepare("SELECT login_id, disabled FROM accounts WHERE user_id = ?").bind(inv.user_id).first<{ login_id: string; disabled: number }>();
+		if (existing?.disabled) return fail("このアカウントは利用停止中です。運営にお問い合わせください。", 403);
+		let loginId: string | null = null;
+		if (!existing) {
+			loginId = checkLoginId(b.loginId);
 			if (!loginId) return fail(LOGIN_ID_HELP);
 			if (await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE login_id = ?").bind(loginId).first()) return fail("このログインIDはすでに使われています。別のIDにしてください。", 409);
-			stmts.push(env.DB.prepare("INSERT INTO accounts (user_id,household_id,login_id,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-				.bind(inv.user_id, inv.household_id, loginId, hash, "member", now, now));
 		}
-		try { await env.DB.batch(stmts); } catch { return fail("このログインIDはすでに使われています。別のIDにしてください。", 409); }
-		await clearFailures(env, ["inv:" + ip]);
+		const now = Date.now();
+		// 先に「使用済み」にしてからパスワードを書く。同時に2回使われない
+		const claimed = await env.DB.prepare("UPDATE invites SET used_at = ? WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?").bind(now, inv.code_hash, now).run();
+		if (!claimed.meta.changes) return fail("招待コードが正しくないか、期限が切れています。", 404);
+		const hash = await hashPassword(b.password as string);
+		try {
+			if (existing) {
+				await env.DB.prepare("UPDATE accounts SET password_hash = ?, session_epoch = session_epoch + 1, updated_at = ? WHERE user_id = ?").bind(hash, now, inv.user_id).run();
+			} else {
+				await env.DB.prepare("INSERT INTO accounts (user_id,household_id,login_id,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+					.bind(inv.user_id, inv.household_id, loginId, hash, "member", now, now).run();
+			}
+		} catch { return fail("このログインIDはすでに使われています。別のIDで、新しい招待コードを発行してもらってください。", 409); }
 		return json({ ok: true }, 200, { "Set-Cookie": await startSession(env, url, inv.user_id) });
 	}
 
 	if (path === "/api/auth/password" && method === "POST") {
 		const s = await currentSession(env, request);
 		if (!s) return fail("ログインしてください。", 401);
+		if (await rateLimit(env, "pw:" + s.userId, 10)) return fail("しばらく時間をおいてから試してください。", 429);
 		const b = await readBody(request);
 		const acc = await env.DB.prepare("SELECT password_hash FROM accounts WHERE user_id = ?").bind(s.userId).first<{ password_hash: string }>();
 		if (!acc || !(await verifyPassword(String(b.current ?? ""), acc.password_hash))) return fail("今のパスワードが違います。", 403);
+		await clearRate(env, "pw:" + s.userId);
 		const pwErr = passwordProblem(b.next);
 		if (pwErr) return fail(pwErr);
 		await env.DB.prepare("UPDATE accounts SET password_hash = ?, session_epoch = session_epoch + 1, updated_at = ? WHERE user_id = ?")
@@ -226,6 +255,10 @@ export async function handleFamily(request: Request, env: Env, url: URL, s: Sess
 		const p = await getPerson(env, str(b.userId));
 		if (!p || p.household_id !== s.householdId) return fail("同じ世帯の家族にだけ発行できます。", 403);
 		if (p.id === s.userId) return fail("自分のパスワードは「パスワードを変更」から変えてください。");
+		const acc = await env.DB.prepare("SELECT role, disabled FROM accounts WHERE user_id = ?").bind(p.id).first<{ role: string; disabled: number }>();
+		if (acc?.disabled) return fail("利用停止中のアカウントには発行できません。", 403);
+		// 家族が管理者のパスワードを書き換えて、管理者としてログインするのを防ぐ
+		if (acc?.role === "admin" && s.role !== "admin") return fail("管理者の再設定コードは、ほかの管理者に依頼してください。", 403);
 		return json(await issueInvite(env, p, s.userId));
 	}
 	return fail("not found", 404);
