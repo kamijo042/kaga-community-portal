@@ -44,9 +44,14 @@ export const unreadCount = (d: State, me: string) => myThreads(d, me).filter((t)
 export const threadsFor = (d: State, kind: ThreadKind, refId: string) =>
 	Object.values(d.threads).filter((t) => t.kind === kind && t.refId === refId);
 export const counterpart = (t: Thread, me: string) => (t.owner === me ? t.other : t.owner);
-export function roleOf(t: Thread, me: string) {
+/** 仕事の相談で、投稿した人（thread.owner）が頼む側か。お願い（依頼）の投稿なら true */
+export const ownerRequests = (d: State, t: Thread) => t.kind === "job" && d.jobs[t.refId]?.type === "request";
+export function roleOf(t: Thread, me: string, d?: State) {
 	if (t.kind === "info") return t.owner === me ? "あなたの投稿への質問" : "投稿への質問";
-	if (t.kind === "job") return t.owner === me ? "あなたが引き受ける側" : "あなたが頼む側";
+	if (t.kind === "job") {
+		const ownerIsRequester = !!d && ownerRequests(d, t);
+		return (t.owner === me) === ownerIsRequester ? "あなたが頼む側" : "あなたが引き受ける側";
+	}
 	return t.owner === me ? "あなたが出品者" : "あなたが購入希望";
 }
 

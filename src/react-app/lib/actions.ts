@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
 import { useApp } from "./app";
-import { threadId } from "./domain";
+import { ownerRequests, threadId } from "./domain";
 import { useData } from "./store";
 import type { ItemStatus, State, ThreadKind } from "./types";
 import { fmt, uid } from "./util";
@@ -68,7 +68,9 @@ export function useActions() {
 			const t = d.threads[tid];
 			if (!t || !me || t.kind === "info") return;
 			mutate((s) => {
-				const e = { id: uid("l_"), date, at: Date.now(), kind: t.kind as "job" | "item", refId: t.refId, tid, from: t.other, to: t.owner, amount, title: t.title, by: me };
+				// 石は頼んだ側から引き受けた側へ。お願い（依頼）の投稿では、投稿した人が払う
+				const [from, to] = ownerRequests(d, t) ? [t.owner, t.other] : [t.other, t.owner];
+				const e = { id: uid("l_"), date, at: Date.now(), kind: t.kind as "job" | "item", refId: t.refId, tid, from, to, amount, title: t.title, by: me };
 				s.ledger[e.id] = e;
 				if (t.kind === "item") {
 					const it = s.items[t.refId];

@@ -194,6 +194,8 @@ main{padding-block:32px 72px}
 .pill.mine{background:var(--ink);color:var(--bg)}
 .pill.edu{background:var(--edu-soft);color:var(--edu)}
 .pill.farm{background:var(--farm-soft);color:var(--farm)}
+.pill.req{background:var(--evt-soft);color:var(--evt)}
+.pill.offer{background:var(--edu-soft);color:var(--edu)}
 .pill.bousai{background:var(--bousai-soft);color:var(--bousai)}
 .pill.evt{background:var(--evt-soft);color:var(--evt)}
 .pill.fam{background:var(--ink);color:var(--bg)}
@@ -524,3 +526,5 @@ img.dot.avatar{object-fit:cover;background:var(--sunk)}
 .hhinv-main{display:flex;flex-direction:column;margin-right:auto;min-width:0}
 .hhinv-main small{color:var(--muted);font-size:12.5px}
 .hhinv-title{font-size:14px;font-weight:700;margin:8px 0 2px}
+.chip-sep{width:1px;align-self:stretch;background:var(--line);margin:4px 2px}
+.job.is-req{border-color:color-mix(in srgb,var(--evt) 35%,var(--line))}

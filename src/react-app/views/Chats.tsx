@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { CatPill, Dot, Empty, NegPill, Prices, StatusPill, Stone } from "../components/ui";
+import { CatPill, Dot, Empty, JobTypePill, NegPill, Prices, StatusPill, Stone } from "../components/ui";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
 import { counterpart, homeOf, isUnread, nameOf, itemStone, KIND_LABEL, myThreads, roleOf } from "../lib/domain";
@@ -32,7 +32,7 @@ export function ChatsView() {
 										{it && <StatusPill s={it.status} />}
 										<span className="t-time" style={{ marginLeft: "auto" }}>{ago(t.lastAt || t.createdAt)}</span>
 									</div>
-									<div style={{ fontSize: 13 }}>{t.title} <span style={{ color: "var(--faint)" }}>・ {roleOf(t, me)}</span></div>
+									<div style={{ fontSize: 13 }}>{t.title} <span style={{ color: "var(--faint)" }}>・ {roleOf(t, me, d)}</span></div>
 									<div className="t-last">{t.lastText || "（まだメッセージはありません）"}</div>
 								</div>
 								{isUnread(d, me, t) && <span className="unread" aria-label="未読" />}
@@ -96,7 +96,7 @@ export function ChatDrawer({ tid }: { tid: string }) {
 			const last = recs[recs.length - 1];
 			deal = (
 				<div className="deal">
-					<span className="lbl">{job.title}</span><Stone n={job.price} /><NegPill yes={job.negotiable} />
+					<span className="lbl">{job.type === "request" && <><JobTypePill type="request" /> </>}{job.title}</span><Stone n={job.price} /><NegPill yes={job.negotiable} />
 					{!dealOpen && <button className="btn small primary" id="deal-open" onClick={openDeal}>依頼成立を記録</button>}
 					{last && (
 						<span className="deal-recs">この相談の成立記録：{recs.length}回・計 {fmt(sum)}石（最新 {last.date}）
@@ -137,7 +137,7 @@ export function ChatDrawer({ tid }: { tid: string }) {
 				<div className="chat-head">
 					<div className="l1">
 						<Dot id={other} />
-						<div className="t"><h2>{nameOf(d, other)}</h2><div className="with">{homeOf(d, other)} ・ {KIND_LABEL[t.kind]}の相談 ・ {roleOf(t, me)}</div></div>
+						<div className="t"><h2>{nameOf(d, other)}</h2><div className="with">{homeOf(d, other)} ・ {KIND_LABEL[t.kind]}の相談 ・ {roleOf(t, me, d)}</div></div>
 						<button className="x" onClick={closeChat} aria-label="閉じる">×</button>
 					</div>
 					{deal}
@@ -153,7 +153,7 @@ export function ChatDrawer({ tid }: { tid: string }) {
 				</div>
 				<div className="msgs" ref={boxRef}>
 					{msgs.length === 0 && (
-						<div className="msg sys"><div className="bub">{t.kind === "info" ? "投稿について聞きたいことを送ってみましょう。" : t.kind === "job" ? "希望の日時や作業の範囲、石の額について相談してみましょう。" : "受け渡しの日時・場所や、品物の状態について聞いてみましょう。"}</div></div>
+						<div className="msg sys"><div className="bub">{t.kind === "info" ? "投稿について聞きたいことを送ってみましょう。" : t.kind === "job" ? (job?.type === "request" ? "引き受けられる日時や内容、石の額について相談してみましょう。" : "希望の日時や作業の範囲、石の額について相談してみましょう。") : "受け渡しの日時・場所や、品物の状態について聞いてみましょう。"}</div></div>
 					)}
 					{msgs.map((m) => m.sys ? (
 						<div className="msg sys" key={m.id}><div className="bub">{m.text}</div><span className="tm">{clock(m.t)}</span></div>

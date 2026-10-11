@@ -40,6 +40,8 @@ export function Pill({ cls, children }: { cls: string; children: ReactNode }) {
 
 const STATUS: Record<ItemStatus, [string, string]> = { open: ["出品中", "open"], nego: ["交渉中", "nego"], done: ["交渉成立", "done"] };
 export const StatusPill = ({ s }: { s: ItemStatus }) => <Pill cls={STATUS[s][1]}>{STATUS[s][0]}</Pill>;
+/** 仕事の種類：できること（引き受けます）／お願い（依頼） */
+export const JobTypePill = ({ type }: { type?: "offer" | "request" }) => (type === "request" ? <Pill cls="req">お願い</Pill> : <Pill cls="offer">できます</Pill>);
 export const NegPill = ({ yes }: { yes: boolean }) => (yes ? <Pill cls="neg-yes">交渉あり</Pill> : <Pill cls="neg-no">交渉なし</Pill>);
 export const CatPill = ({ cat }: { cat: PostCat }) => <Pill cls={CATS[cat].cls}>{CATS[cat].label}</Pill>;
 

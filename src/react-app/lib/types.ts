@@ -21,9 +21,14 @@ export type Person = {
 	updatedAt: number;
 };
 
+/** offer = できること（引き受けます）／ request = お願いしたいこと（依頼） */
+export type JobType = "offer" | "request";
 export type Job = {
 	id: string;
 	owner: string;
+	type?: JobType;
+	/** お願いの希望日（YYYY-MM-DD・任意） */
+	wantDate?: string;
 	title: string;
 	desc: string;
 	price: number;

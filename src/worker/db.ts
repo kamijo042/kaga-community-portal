@@ -54,7 +54,7 @@ function plausibleDate(v: unknown) {
 const toDoc = {
 	households: (r: Row) => ({ id: r.id, name: r.name, district: r.district, note: r.note, createdAt: r.created_at, updatedAt: r.updated_at }),
 	people: (r: Row) => ({ id: r.id, householdId: r.household_id, name: r.name, relation: r.relation, birthYear: r.birth_year, avatar: r.avatar ?? null, createdAt: r.created_at, updatedAt: r.updated_at }),
-	jobs: (r: Row) => ({ id: r.id, owner: r.owner, title: r.title, desc: r.description, price: r.price, negotiable: !!r.negotiable, active: !!r.active, createdAt: r.created_at, updatedAt: r.updated_at }),
+	jobs: (r: Row) => ({ id: r.id, owner: r.owner, type: r.type === "request" ? "request" : "offer", wantDate: r.want_date ?? "", title: r.title, desc: r.description, price: r.price, negotiable: !!r.negotiable, active: !!r.active, createdAt: r.created_at, updatedAt: r.updated_at }),
 	items: (r: Row) => ({ id: r.id, owner: r.owner, name: r.name, desc: r.description, priceStone: r.price_stone, priceYen: r.price_yen, photos: parseArr(r.photos), status: r.status, ...(r.buyer ? { buyer: r.buyer } : {}), ...(r.done_at ? { doneAt: r.done_at } : {}), createdAt: r.created_at, updatedAt: r.updated_at }),
 	posts: (r: Row) => ({
 		id: r.id, owner: r.owner, cat: r.cat, kind: r.kind, title: r.title, body: r.body, link: r.link, targets: parseArr(r.targets), photo: r.photo ?? null,
@@ -155,10 +155,12 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 					break;
 				case "jobs":
 					if (!ok(d.owner)) continue;
-					p(`INSERT INTO jobs (id,owner,title,description,price,negotiable,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)
-					   ON CONFLICT(id) DO UPDATE SET title=excluded.title, description=excluded.description, price=excluded.price,
+					// type（できること／お願い）は作ったときだけ決まる。あとから変えると相談の立場（石の流れ）が逆になるため
+					p(`INSERT INTO jobs (id,owner,type,want_date,title,description,price,negotiable,active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)
+					   ON CONFLICT(id) DO UPDATE SET want_date=excluded.want_date, title=excluded.title, description=excluded.description, price=excluded.price,
 					   negotiable=excluded.negotiable, active=excluded.active, updated_at=excluded.updated_at`,
-					d.id, d.owner, str(d.title, 100), str(d.desc), stone(d.price), bool(d.negotiable), bool(d.active), created, now);
+					d.id, d.owner, d.type === "request" ? "request" : "offer", d.type === "request" ? plausibleEvDate(d.wantDate) : null,
+					str(d.title, 100), str(d.desc), stone(d.price), bool(d.negotiable), bool(d.active), created, now);
 					break;
 				case "items":
 					if (!ok(d.owner)) continue;
@@ -249,7 +251,7 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 // ---------- 権限チェック ----------
 type Who = { userId: string; householdId: string; role: "member" | "admin" };
 type RefRow = { id: string; owner: string; title: string; cat: string | null };
-type ThreadRow = { id: string; kind: string; owner: string; other: string };
+type ThreadRow = { id: string; kind: string; ref_id?: string; owner: string; other: string };
 type LedgerRow = { id: string; thread_id: string; kind: string; payer: string; payee: string; amount: number; date: string; title: string; recorded_by: string };
 
 async function selectIn<T>(db: D1Database, sql: (ph: string) => string, ids: string[]): Promise<T[]> {
@@ -304,7 +306,7 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 		selectIn<RefRow>(db, (p) => `SELECT id, owner, title, NULL AS cat FROM jobs WHERE id IN (${p})`, [...ids.jobs]),
 		selectIn<RefRow>(db, (p) => `SELECT id, owner, name AS title, NULL AS cat FROM items WHERE id IN (${p})`, [...ids.items]),
 		selectIn<RefRow>(db, (p) => `SELECT id, owner, title, cat FROM posts WHERE id IN (${p})`, [...ids.posts]),
-		selectIn<ThreadRow>(db, (p) => `SELECT id, kind, owner, other FROM threads WHERE id IN (${p})`, [...ids.threads]),
+		selectIn<ThreadRow>(db, (p) => `SELECT id, kind, ref_id, owner, other FROM threads WHERE id IN (${p})`, [...ids.threads]),
 		selectIn<LedgerRow>(db, (p) => `SELECT id, thread_id, kind, payer, payee, amount, date, title, recorded_by FROM ledger WHERE id IN (${p})`, [...ids.ledger]),
 		db.prepare("SELECT (SELECT COUNT(*) FROM jobs WHERE owner = ?) AS jobs, (SELECT COUNT(*) FROM items WHERE owner = ?) AS items, (SELECT COUNT(*) FROM posts WHERE owner = ?) AS posts")
 			.bind(me, me, me).first<{ jobs: number; items: number; posts: number }>(),
@@ -316,7 +318,10 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 	};
 	const made = { jobs: Number(caps?.jobs ?? 0), items: Number(caps?.items ?? 0), posts: Number(caps?.posts ?? 0) };
 	const missing = [...new Set(ledger.map((l) => l.thread_id))].filter((id) => !threads.some((t) => t.id === id));
-	if (missing.length) threads.push(...(await selectIn<ThreadRow>(db, (p) => `SELECT id, kind, owner, other FROM threads WHERE id IN (${p})`, missing)));
+	if (missing.length) threads.push(...(await selectIn<ThreadRow>(db, (p) => `SELECT id, kind, ref_id, owner, other FROM threads WHERE id IN (${p})`, missing)));
+	// 仕事の相談の石の流れ：できること＝相談した人→投稿した人／お願い＝投稿した人→引き受けた人
+	const ledgerJobRefs = [...new Set(ops.flatMap((op) => (op.t === "upsert" && op.tbl === "ledger" ? [threads.find((t) => t.id === op.doc?.tid)] : [])).filter((t) => t?.kind === "job" && t.ref_id).map((t) => t!.ref_id as string))];
+	const jobType = new Map((await selectIn<{ id: string; type: string }>(db, (p) => `SELECT id, type FROM jobs WHERE id IN (${p})`, ledgerJobRefs)).map((r) => [r.id, r.type]));
 	const thr = new Map(threads.map((r) => [r.id, r]));
 	const led = new Map(ledger.map((r) => [r.id, r]));
 	const party = (t: ThreadRow | undefined) => !!t && (t.owner === me || t.other === me);
@@ -371,7 +376,9 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 						allow = cur.thread_id === d.tid && cur.kind === String(d.kind) && cur.payer === d.from && cur.payee === d.to
 							&& Number(cur.amount) === amount && cur.date === String(d.date) && cur.title === title && cur.recorded_by === d.by;
 					} else {
-						allow = !!t && party(t) && d.by === me && d.from === t.other && d.to === t.owner && String(d.kind) === t.kind && (t.kind !== "item" || t.owner === me);
+						const reqJob = !!t && t.kind === "job" && jobType.get(t.ref_id ?? "") === "request";
+						const [payer, payee] = t ? (reqJob ? [t.owner, t.other] : [t.other, t.owner]) : ["", ""];
+						allow = !!t && party(t) && d.by === me && d.from === payer && d.to === payee && String(d.kind) === t.kind && (t.kind !== "item" || t.owner === me);
 					}
 					break;
 				}

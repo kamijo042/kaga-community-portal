@@ -107,3 +107,9 @@ export function downloadText(filename: string, text: string, type: string) {
 	a.click();
 	setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
+
+/** YYYY-MM-DD → 「10月20日（火）」 */
+export function evDay(ds: string) {
+	const d = new Date(ds + "T00:00");
+	return isNaN(+d) ? ds : `${d.getMonth() + 1}月${d.getDate()}日（${WD[d.getDay()]}）`;
+}
