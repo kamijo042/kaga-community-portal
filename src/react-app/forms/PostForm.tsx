@@ -31,6 +31,12 @@ export function PostForm({ existing, defaultCat = "event" }: { existing?: Post; 
 	const toggleTarget = (a: string) => setTargets((t) => (t.includes(a) ? t.filter((x) => x !== a) : [...t, a]));
 
 	const funding = cat === "event" && kind === "クラウドファンディング";
+	/** 日付・時間・場所はどの分類でも任意。定員・持ち物は地域イベントだけ */
+	const schedule = () => {
+		const isEv = cat === "event";
+		const s = { date, start: funding ? "" : start, end: funding ? "" : end, place: place.trim(), capacity: isEv && !funding ? +cap || null : null, bring: isEv && !funding ? bring.trim() : "" };
+		return isEv || s.date || s.start || s.place ? s : null;
+	};
 	const save = async () => {
 		if (!me) return;
 		if (!title.trim()) return setErr("タイトルを入力してください。");
@@ -45,7 +51,7 @@ export function PostForm({ existing, defaultCat = "event" }: { existing?: Post; 
 				d.posts[id] = {
 					id, owner: me, cat, kind, title: title.trim(), body: body.trim(), link: link.trim(),
 					targets: cat === "farm" ? [] : AGES.filter((a) => targets.includes(a)),
-					event: cat === "event" ? (funding ? { date, start: "", end: "", place: place.trim(), capacity: null, bring: "" } : { date, start, end, place: place.trim(), capacity: +cap || null, bring: bring.trim() }) : null,
+					event: schedule(),
 					photo: pid, rsvps: existing?.rsvps ?? {},
 					createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(),
 				};
@@ -88,20 +94,20 @@ export function PostForm({ existing, defaultCat = "event" }: { existing?: Post; 
 				</div>
 				<div className="field"><label htmlFor="po-kind">種類</label><select id="po-kind" value={kind} onChange={(e) => setKind(e.target.value)}>{SUBKINDS[cat].map((k) => <option key={k}>{k}</option>)}</select></div>
 				<div className="field"><label htmlFor="po-title">タイトル</label><input type="text" id="po-title" maxLength={80} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例：秋の稲刈り体験 参加者募集" /></div>
-				{cat === "event" && (
+				{(
 					<div className="field" style={{ gap: 10 }}>
 						<div className="two">
 							<div className="field"><label htmlFor="po-date">{funding ? "締切日（任意）" : "日付（任意）"}</label><input type="date" id="po-date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-							<div className="field"><label htmlFor="po-place">場所</label><input type="text" id="po-place" value={place} onChange={(e) => setPlace(e.target.value)} placeholder="例：山代温泉 公民館" /></div>
+							<div className="field"><label htmlFor="po-place">場所（任意）</label><input type="text" id="po-place" value={place} onChange={(e) => setPlace(e.target.value)} placeholder="例：山代温泉 公民館" /></div>
 						</div>
 						{!funding && <><div className="two">
-							<div className="field"><label htmlFor="po-start">開始</label><input type="time" id="po-start" value={start} onChange={(e) => setStart(e.target.value)} /></div>
-							<div className="field"><label htmlFor="po-end">終了</label><input type="time" id="po-end" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
+							<div className="field"><label htmlFor="po-start">開始（任意）</label><input type="time" id="po-start" value={start} onChange={(e) => setStart(e.target.value)} /></div>
+							<div className="field"><label htmlFor="po-end">終了（任意）</label><input type="time" id="po-end" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
 						</div>
-						<div className="two">
+						{cat === "event" && <div className="two">
 							<div className="field"><label htmlFor="po-cap">定員（人・任意）</label><input type="number" id="po-cap" min={1} value={cap} onChange={(e) => setCap(e.target.value)} /></div>
 							<div className="field"><label htmlFor="po-bring">持ち物（任意）</label><input type="text" id="po-bring" value={bring} onChange={(e) => setBring(e.target.value)} placeholder="例：軍手、長靴" /></div>
-						</div></>}
+						</div>}</>}
 					</div>
 				)}
 				{cat !== "farm" && (

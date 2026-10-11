@@ -40,6 +40,8 @@ function shortList(v: unknown, maxItems: number, maxLen: number) {
 	const xs = Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").map((x) => x.slice(0, maxLen)).filter(Boolean).slice(0, maxItems) : [];
 	return JSON.stringify(xs);
 }
+/** 予定の日付（YYYY-MM-DD）。形が違えば日付なし */
+const plausibleEvDate = (v: unknown) => { const s = str(v, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; };
 /** 流通の日付。未来すぎる日や壊れた文字列は拒否する */
 function plausibleDate(v: unknown) {
 	const s = String(v ?? "");
@@ -56,7 +58,7 @@ const toDoc = {
 	items: (r: Row) => ({ id: r.id, owner: r.owner, name: r.name, desc: r.description, priceStone: r.price_stone, priceYen: r.price_yen, photos: parseArr(r.photos), status: r.status, ...(r.buyer ? { buyer: r.buyer } : {}), ...(r.done_at ? { doneAt: r.done_at } : {}), createdAt: r.created_at, updatedAt: r.updated_at }),
 	posts: (r: Row) => ({
 		id: r.id, owner: r.owner, cat: r.cat, kind: r.kind, title: r.title, body: r.body, link: r.link, targets: parseArr(r.targets), photo: r.photo ?? null,
-		event: r.cat === "event" ? { date: r.ev_date ?? "", start: r.ev_start ?? "", end: r.ev_end ?? "", place: r.ev_place ?? "", capacity: r.ev_capacity ?? null, bring: r.ev_bring ?? "" } : null,
+		event: r.cat === "event" || r.ev_date || r.ev_start || r.ev_place ? { date: r.ev_date ?? "", start: r.ev_start ?? "", end: r.ev_end ?? "", place: r.ev_place ?? "", capacity: r.ev_capacity ?? null, bring: r.ev_bring ?? "" } : null,
 		createdAt: r.created_at, updatedAt: r.updated_at,
 	}),
 	rsvps: (r: Row) => ({ postId: r.post_id, householdId: r.household_id, s: r.status, n: r.people, at: r.updated_at }),
@@ -165,7 +167,8 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 					break;
 				case "posts": {
 					if (!ok(d.owner) || !["farm", "edu", "bousai", "event"].includes(String(d.cat))) continue;
-					const ev = (d.cat === "event" && d.event && typeof d.event === "object" ? d.event : {}) as Doc;
+					const ev = (d.event && typeof d.event === "object" ? d.event : {}) as Doc;
+					const isEv = d.cat === "event";
 					const cap = int(ev.capacity);
 					p(`INSERT INTO posts (id,owner,cat,kind,title,body,link,targets,photo,ev_date,ev_start,ev_end,ev_place,ev_capacity,ev_bring,created_at,updated_at)
 					   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -173,8 +176,9 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 					   targets=excluded.targets, photo=excluded.photo, ev_date=excluded.ev_date, ev_start=excluded.ev_start, ev_end=excluded.ev_end,
 					   ev_place=excluded.ev_place, ev_capacity=excluded.ev_capacity, ev_bring=excluded.ev_bring, updated_at=excluded.updated_at`,
 					d.id, d.owner, d.cat, str(d.kind, 50), str(d.title, 120), str(d.body), httpUrl(d.link), shortList(d.targets, 12, 40), ok(d.photo) ? d.photo : null,
-					d.cat === "event" ? str(ev.date, 10) || null : null, d.cat === "event" ? str(ev.start, 5) : null, d.cat === "event" ? str(ev.end, 5) : null,
-					d.cat === "event" ? str(ev.place, 200) : null, d.cat === "event" && cap !== null ? Math.min(10000, Math.max(0, cap)) : null, d.cat === "event" ? str(ev.bring, 200) : null, created, now);
+					// 日付・時間・場所はどの分類でも（任意）。定員・持ち物は地域イベントだけ
+					plausibleEvDate(ev.date), str(ev.start, 5), str(ev.end, 5),
+					str(ev.place, 200), isEv && cap !== null ? Math.min(10000, Math.max(0, cap)) : null, isEv ? str(ev.bring, 200) : null, created, now);
 					break;
 				}
 				case "threads":

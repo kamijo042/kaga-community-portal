@@ -29,7 +29,7 @@ export function InfoView() {
 	if (!me) return null;
 
 	const all = Object.values(d.posts);
-	const upcoming = all.filter((p) => p.cat === "event" && evStart(p) && !evPast(p)).sort((a, b) => +evStart(a)! - +evStart(b)!).slice(0, 4);
+	const upcoming = all.filter((p) => evStart(p) && !evPast(p)).sort((a, b) => +evStart(a)! - +evStart(b)!).slice(0, 4);
 	let list = all.filter((p) => cat === "all" || p.cat === cat);
 	if (fam) list = list.filter((p) => matchesFamily(d, me, p));
 	const qq = q.trim().toLowerCase();
@@ -42,12 +42,12 @@ export function InfoView() {
 	return (
 		<>
 			<div className="view-head">
-				<div><h2>情報</h2><p>農業・教育・防災・地域イベントの情報を、世帯どうしで持ち寄る掲示板です。</p></div>
+				<div><h2>情報</h2><p>農業・教育・防災・地域イベントの情報を、世帯どうしで持ち寄る掲示板です。日付を入れると「近日の予定」に出ます。</p></div>
 				<button className="btn primary" id="post-new" onClick={newPost}>＋ 投稿する</button>
 			</div>
 			{upcoming.length > 0 && (
 				<>
-					<p className="sec-title">近日のイベント</p>
+					<p className="sec-title">近日の予定</p>
 					<div className="upcoming">
 						{upcoming.map((p) => {
 							const g = goCount(p);
@@ -56,8 +56,8 @@ export function InfoView() {
 									<DateBox p={p} />
 									<span className="ev-main">
 										<span className="ev-title">{p.title}</span>
-										<span className="ev-sub">{isFunding(p) ? "クラウドファンディング締切" : [p.event?.start, p.event?.place].filter(Boolean).join(" ・ ") || "時間・場所は詳細へ"}</span>
-										<span className="ev-sub">参加 {g.hh}世帯{g.people ? `（${g.people}人）` : ""}{p.rsvps?.[householdOf(d, me) ?? ""]?.s === "go" && <b style={{ color: "var(--accent)" }}> ・ 参加予定</b>}</span>
+										<span className="ev-sub">{isFunding(p) ? "クラウドファンディング締切" : [p.cat !== "event" ? CATS[p.cat]?.label : "", p.event?.start, p.event?.place].filter(Boolean).join(" ・ ") || "時間・場所は詳細へ"}</span>
+										{p.cat === "event" && <span className="ev-sub">参加 {g.hh}世帯{g.people ? `（${g.people}人）` : ""}{p.rsvps?.[householdOf(d, me) ?? ""]?.s === "go" && <b style={{ color: "var(--accent)" }}> ・ 参加予定</b>}</span>}
 									</span>
 								</button>
 							);
@@ -90,7 +90,7 @@ export function InfoView() {
 						const g = p.cat === "event" ? goCount(p) : null;
 						return (
 							<button key={p.id} className={`post ${evPast(p) ? "is-past" : ""}`} onClick={() => openModal(<PostDetail id={p.id} />)}>
-								{p.cat === "event" && evStart(p) ? <DateBox p={p} /> : p.photo ? <span className="pthumb"><Photo pid={p.photo} /></span> : null}
+								{evStart(p) ? <DateBox p={p} /> : p.photo ? <span className="pthumb"><Photo pid={p.photo} /></span> : null}
 								<span className="pmain">
 									<span className="meta-row">
 										<CatPill cat={p.cat} />
@@ -100,7 +100,7 @@ export function InfoView() {
 										{evPast(p) && <Pill cls="done">{isFunding(p) ? "締切済み" : "終了"}</Pill>}
 									</span>
 									<h3>{p.title}</h3>
-									{p.cat === "event" && (evDateStr(p) || p.event?.place) && <span style={{ fontSize: 13 }}>{[evDateStr(p), p.event?.place].filter(Boolean).join(" ・ ")}</span>}
+									{(evDateStr(p) || p.event?.place) && <span style={{ fontSize: 13 }}>{[evDateStr(p), p.event?.place].filter(Boolean).join(" ・ ")}</span>}
 									<span className="excerpt">{p.body}</span>
 									<span className="pfoot">
 										<span>{nameOf(d, p.owner)}（{hhLabel(d, householdOf(d, p.owner))}）</span>
@@ -131,6 +131,7 @@ export function PostDetail({ id }: { id: string }) {
 	const my = p.rsvps?.[hid];
 	const past = evPast(p);
 	const href = p.link ? safeHttpUrl(p.link) : null;
+	const hasSchedule = p.cat === "event" || !!(p.event?.date || p.event?.start || p.event?.place);
 	const full = !!p.event?.capacity && g.people >= p.event.capacity && my?.s !== "go";
 	const goers = Object.entries(p.rsvps ?? {}).filter(([, x]) => x.s === "go");
 
@@ -164,7 +165,7 @@ export function PostDetail({ id }: { id: string }) {
 				{past && <Pill cls="done">{isFunding(p) ? "締切済み" : "終了"}</Pill>}
 			</div>
 			<h3 style={{ fontSize: 19 }}>{p.title}</h3>
-			{p.cat === "event" && p.event && (
+			{hasSchedule && p.event && (
 				<dl className="evbox">
 					{evStart(p) && <><dt>{isFunding(p) ? "締切日" : "日時"}</dt><dd>{evDateStr(p, false)}</dd></>}
 					{p.event.place && <><dt>場所</dt><dd>{p.event.place}</dd></>}
@@ -173,7 +174,7 @@ export function PostDetail({ id }: { id: string }) {
 					{p.event.bring && <><dt>持ち物</dt><dd>{p.event.bring}</dd></>}
 				</dl>
 			)}
-			{p.cat !== "event" && p.targets?.length > 0 && <p style={{ fontSize: 13, color: "var(--muted)" }}>対象：{p.targets.join("・")}</p>}
+			{!hasSchedule && p.targets?.length > 0 && <p style={{ fontSize: 13, color: "var(--muted)" }}>対象：{p.targets.join("・")}</p>}
 			{p.body && <p className="detail-desc">{p.body}</p>}
 			{href && <p style={{ fontSize: 14, wordBreak: "break-all" }}>参考リンク：<a href={href} target="_blank" rel="noopener noreferrer">{p.link}</a></p>}
 			{p.cat === "event" && (

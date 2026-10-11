@@ -88,7 +88,7 @@ export function matchesFamily(d: State, me: string, p: Post) {
 }
 export const evStart = (p: Post) => (p.event?.date ? new Date(p.event.date + "T" + (p.event.start || "00:00")) : null);
 export function evPast(p: Post) {
-	if (p.cat !== "event" || !p.event?.date) return false;
+	if (!p.event?.date) return false;
 	return new Date(p.event.date + "T" + (p.event.end || "23:59")) < new Date();
 }
 /** クラウドファンディングは日付を「締切日」として扱う（時刻なし） */
