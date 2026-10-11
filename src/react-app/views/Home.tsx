@@ -9,7 +9,7 @@ import { ago } from "../lib/util";
 import { AccountsAdmin, InviteCodeModal } from "./Admin";
 
 export function HomeView() {
-	const { d, me, user } = useData();
+	const { d, me } = useData();
 	const { openModal, toast } = useApp();
 	const hid = householdOf(d, me);
 	const [accs, setAccs] = useState<Record<string, AccountRow>>({});
@@ -31,7 +31,7 @@ export function HomeView() {
 	const issue = async (userId: string, name: string) => {
 		try {
 			const r = await familyApi.invite(userId);
-			openModal(<InviteCodeModal title={r.purpose === "reset" ? "パスワード再設定コード" : "ログインの招待コード"} name={name} code={r.code} expiresAt={r.expiresAt} />);
+			openModal(<InviteCodeModal title="ログインの招待コード" name={name} code={r.code} expiresAt={r.expiresAt} />);
 			loadAccs();
 		} catch (e) { toast((e as Error).message); }
 	};
@@ -58,7 +58,6 @@ export function HomeView() {
 						{fam.map((p) => {
 							const a = accs[p.id];
 							const age = ageBucket(p.birthYear);
-							const resetBlocked = a?.role === "admin" && user?.role !== "admin" && !!a.loginId;
 							return (
 								<div className="fam-row" key={p.id} data-person={p.name}>
 									<Dot id={p.id} />
@@ -71,17 +70,16 @@ export function HomeView() {
 										</span>
 									</div>
 									<div className="fam-acts">
-										{p.id !== me && !resetBlocked && (
-											<button className="btn small" onClick={() => issue(p.id, p.name)}>{a?.loginId ? "再設定コード" : a?.inviteExpiresAt ? "招待コードを再発行" : "ログインを発行"}</button>
+										{p.id !== me && !a?.loginId && (
+											<button className="btn small" onClick={() => issue(p.id, p.name)}>{a?.inviteExpiresAt ? "招待コードを再発行" : "ログインを発行"}</button>
 										)}
-										{resetBlocked && <span className="muted">再設定は管理者へ</span>}
 										<button className="btn small ghost" onClick={() => openModal(<PersonForm householdId={hid} existing={p} hasLogin={!!a?.loginId} />)}>編集</button>
 									</div>
 								</div>
 							);
 						})}
 					</div>
-					<p className="hint-p" style={{ marginTop: 12 }}>「ログインを発行」で招待コードが出ます。その家族が自分のスマホなどで登録すると、ひとりずつログインできます。</p>
+					<p className="hint-p" style={{ marginTop: 12 }}>「ログインを発行」で招待コードが出ます。その家族が自分のスマホなどで登録すると、ひとりずつログインできます。ログインのある家族がパスワードを忘れたときは、運営に「再設定コード」を依頼してください。ログインのない家族の名前と写真は、ほかの世帯には表示されません。</p>
 				</section>
 				<section className="card">
 					<h3>会員の世帯（{all.length}）</h3>

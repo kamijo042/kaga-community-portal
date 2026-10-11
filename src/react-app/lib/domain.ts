@@ -52,14 +52,16 @@ export function roleOf(t: Thread, me: string) {
 
 // ---- 情報 ----
 export const CATS: Record<PostCat, { label: string; cls: string }> = {
-	edu: { label: "教育", cls: "edu" },
 	farm: { label: "農業", cls: "farm" },
+	edu: { label: "教育", cls: "edu" },
+	bousai: { label: "防災", cls: "bousai" },
 	event: { label: "地域イベント", cls: "evt" },
 };
 export const SUBKINDS: Record<PostCat, string[]> = {
-	edu: ["学校・園", "習い事・教室", "学び合い", "子育て", "その他"],
 	farm: ["情報共有", "手伝い募集", "道具の貸し借り", "おすそわけ・直売", "獣害・困りごと"],
-	event: ["お祭り・行事", "清掃・共同作業", "交流会", "体験・講座", "その他"],
+	edu: ["学校・園", "習い事・教室", "学び合い", "子育て", "その他"],
+	bousai: ["避難・防災情報", "防災訓練", "備え・備蓄", "災害時の助け合い", "その他"],
+	event: ["お祭り・行事", "清掃・共同作業", "交流会", "体験・講座", "クラウドファンディング", "議会", "その他"],
 };
 export const AGES = ["未就学", "小学生", "中学生", "高校生", "大人", "全員"];
 
@@ -89,10 +91,23 @@ export function evPast(p: Post) {
 	if (p.cat !== "event" || !p.event?.date) return false;
 	return new Date(p.event.date + "T" + (p.event.end || "23:59")) < new Date();
 }
-export function evDateStr(p: Post) {
+/** クラウドファンディングは日付を「締切日」として扱う（時刻なし） */
+export const isFunding = (p: Pick<Post, "kind">) => p.kind === "クラウドファンディング";
+export function evDateStr(p: Post, fundingSuffix = true) {
 	const d = evStart(p);
 	if (!d || !p.event) return "";
-	return `${d.getMonth() + 1}月${d.getDate()}日（${WD[d.getDay()]}）${p.event.start ? " " + p.event.start : ""}${p.event.end ? "〜" + p.event.end : ""}`;
+	const day = `${d.getMonth() + 1}月${d.getDate()}日（${WD[d.getDay()]}）`;
+	if (isFunding(p)) return fundingSuffix ? day + "締切" : day;
+	return `${day}${p.event.start ? " " + p.event.start : ""}${p.event.end ? "〜" + p.event.end : ""}`;
+}
+/** イベントの並び順：これからの日付順 → 日付なし（新しい順）→ 終了（新しい順） */
+export function evOrder(a: Post, b: Post) {
+	const rank = (p: Post) => (evPast(p) ? 2 : evStart(p) ? 0 : 1);
+	const ra = rank(a), rb = rank(b);
+	if (ra !== rb) return ra - rb;
+	if (ra === 0) return +evStart(a)! - +evStart(b)!;
+	if (ra === 2) return +evStart(b)! - +evStart(a)!;
+	return b.createdAt - a.createdAt;
 }
 export function goCount(p: Post) {
 	const r = Object.values(p.rsvps ?? {});

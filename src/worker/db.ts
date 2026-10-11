@@ -79,7 +79,7 @@ export async function sync(db: D1Database, since: number, me: string | null, myH
 	const q = (sql: string, ...binds: unknown[]) => db.prepare(sql).bind(...binds);
 	const res = await db.batch([
 		q("SELECT * FROM households WHERE updated_at > ?", since),
-		q("SELECT * FROM people WHERE updated_at > ?", since),
+		q("SELECT p.*, (a.user_id IS NOT NULL) AS has_login FROM people p LEFT JOIN accounts a ON a.user_id = p.id WHERE p.updated_at > ?", since),
 		q("SELECT * FROM jobs WHERE updated_at > ?", since),
 		q("SELECT * FROM items WHERE updated_at > ?", since),
 		q("SELECT * FROM posts WHERE updated_at > ?", since),
@@ -100,7 +100,12 @@ export async function sync(db: D1Database, since: number, me: string | null, myH
 			const doc = conv(r);
 			// 連絡メモ・生まれ年・続柄は自分の世帯だけ。画面でも他世帯には出していない
 			if (t === "households" && doc.id !== home) doc.note = "";
-			if (t === "people" && doc.householdId !== home) { doc.birthYear = ""; doc.relation = ""; }
+			if (t === "people" && doc.householdId !== home) {
+				doc.birthYear = "";
+				doc.relation = "";
+				// ログインの無い家族（赤ちゃん・子どもなど）は、他の世帯には名前も写真も出さない（人数にだけ数える）
+				if (!r.has_login) { doc.name = ""; doc.avatar = null; }
+			}
 			return doc;
 		});
 	});
@@ -159,7 +164,7 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 					["open", "nego", "done"].includes(String(d.status)) ? d.status : "open", ok(d.buyer) ? d.buyer : null, int(d.doneAt), created, now);
 					break;
 				case "posts": {
-					if (!ok(d.owner) || !["edu", "farm", "event"].includes(String(d.cat))) continue;
+					if (!ok(d.owner) || !["farm", "edu", "bousai", "event"].includes(String(d.cat))) continue;
 					const ev = (d.cat === "event" && d.event && typeof d.event === "object" ? d.event : {}) as Doc;
 					const cap = int(ev.capacity);
 					p(`INSERT INTO posts (id,owner,cat,kind,title,body,link,targets,photo,ev_date,ev_start,ev_end,ev_place,ev_capacity,ev_bring,created_at,updated_at)
@@ -286,6 +291,7 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 		if (op.t === "delete" && op.tbl in ids && ok(op.id)) ids[op.tbl as keyof typeof ids].add(op.id);
 		if ((op.t === "rsvp" || op.t === "unrsvp") && ok(op.postId)) ids.posts.add(op.postId);
 		if (op.t === "message" && ok(op.doc?.threadId)) ids.threads.add(op.doc.threadId as string);
+		if (op.t === "read" && ok(op.threadId)) ids.threads.add(op.threadId);
 	}
 	const [jobs, items, posts, threads, ledger, caps] = await Promise.all([
 		selectIn<RefRow>(db, (p) => `SELECT id, owner, title, NULL AS cat FROM jobs WHERE id IN (${p})`, [...ids.jobs]),
@@ -369,7 +375,10 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 			allow = op.householdId === myHome && owner.posts.get(op.postId)?.cat === "event";
 		} else if (op.t === "unrsvp") {
 			allow = op.householdId === myHome;
-		} else if (op.t === "read" || op.t === "seen") {
+		} else if (op.t === "read") {
+			// 既読は自分が当事者の相談だけ（存在しない相談IDで行を増やされないように）
+			allow = op.userId === me && party(thr.get(op.threadId));
+		} else if (op.t === "seen") {
 			allow = op.userId === me;
 		} else if (op.t === "delete") {
 			if (op.tbl === "ledger") { const l = led.get(op.id); allow = !!l && (party(thr.get(l.thread_id)) || admin); }

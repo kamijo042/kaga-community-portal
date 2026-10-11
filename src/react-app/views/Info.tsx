@@ -3,7 +3,7 @@ import { CatPill, Empty, Modal, Owner, Photo, Pill } from "../components/ui";
 import { PostForm } from "../forms/PostForm";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
-import { evDateStr, evPast, evStart, familySize, forMyKids, goCount, hhLabel, householdOf, matchesFamily, myBuckets, nameOf } from "../lib/domain";
+import { CATS, evDateStr, evOrder, evPast, evStart, isFunding, familySize, forMyKids, goCount, hhLabel, householdOf, matchesFamily, myBuckets, nameOf } from "../lib/domain";
 import { useData } from "../lib/store";
 import type { Post, PostCat } from "../lib/types";
 import { ago, WD, safeHttpUrl } from "../lib/util";
@@ -29,12 +29,12 @@ export function InfoView() {
 	if (!me) return null;
 
 	const all = Object.values(d.posts);
-	const upcoming = all.filter((p) => p.cat === "event" && !evPast(p)).sort((a, b) => +evStart(a)! - +evStart(b)!).slice(0, 4);
+	const upcoming = all.filter((p) => p.cat === "event" && evStart(p) && !evPast(p)).sort((a, b) => +evStart(a)! - +evStart(b)!).slice(0, 4);
 	let list = all.filter((p) => cat === "all" || p.cat === cat);
 	if (fam) list = list.filter((p) => matchesFamily(d, me, p));
 	const qq = q.trim().toLowerCase();
 	if (qq) list = list.filter((p) => `${p.title} ${p.body} ${p.kind} ${p.event?.place ?? ""}`.toLowerCase().includes(qq));
-	if (cat === "event") list.sort((a, b) => Number(evPast(a)) - Number(evPast(b)) || (evPast(a) ? +evStart(b)! - +evStart(a)! : +evStart(a)! - +evStart(b)!));
+	if (cat === "event") list.sort(evOrder);
 	else list.sort((a, b) => b.createdAt - a.createdAt);
 	const hasKids = [...myBuckets(d, me)].some((x) => x !== "大人");
 	const newPost = () => openModal(<PostForm defaultCat={cat === "all" ? "event" : cat} />);
@@ -42,7 +42,7 @@ export function InfoView() {
 	return (
 		<>
 			<div className="view-head">
-				<div><h2>情報</h2><p>教育・農業・地域イベントの情報を、世帯どうしで持ち寄る掲示板です。</p></div>
+				<div><h2>情報</h2><p>農業・教育・防災・地域イベントの情報を、世帯どうしで持ち寄る掲示板です。</p></div>
 				<button className="btn primary" id="post-new" onClick={newPost}>＋ 投稿する</button>
 			</div>
 			{upcoming.length > 0 && (
@@ -56,7 +56,7 @@ export function InfoView() {
 									<DateBox p={p} />
 									<span className="ev-main">
 										<span className="ev-title">{p.title}</span>
-										<span className="ev-sub">{[p.event?.start, p.event?.place].filter(Boolean).join(" ・ ") || "時間・場所は詳細へ"}</span>
+										<span className="ev-sub">{isFunding(p) ? "クラウドファンディング締切" : [p.event?.start, p.event?.place].filter(Boolean).join(" ・ ") || "時間・場所は詳細へ"}</span>
 										<span className="ev-sub">参加 {g.hh}世帯{g.people ? `（${g.people}人）` : ""}{p.rsvps?.[householdOf(d, me) ?? ""]?.s === "go" && <b style={{ color: "var(--accent)" }}> ・ 参加予定</b>}</span>
 									</span>
 								</button>
@@ -66,9 +66,9 @@ export function InfoView() {
 				</>
 			)}
 			<div className="toolbar">
-				<input className="search" type="search" placeholder="情報を検索（例：田植え、学童、清掃）" value={q} onChange={(e) => setQ(e.target.value)} />
+				<input className="search" type="search" placeholder="情報を検索（例：田植え、学童、避難所、清掃）" value={q} onChange={(e) => setQ(e.target.value)} />
 				<div className="chips">
-					{([["all", "すべて"], ["edu", "教育"], ["farm", "農業"], ["event", "地域イベント"]] as const).map(([v, l]) => (
+					{([["all", "すべて"], ["farm", "農業"], ["edu", "教育"], ["bousai", "防災"], ["event", "地域イベント"]] as const).map(([v, l]) => (
 						<button key={v} className="chip-btn" aria-pressed={cat === v} onClick={() => setCat(v)}>{l}</button>
 					))}
 					<button className="chip-btn" aria-pressed={fam} onClick={() => setFam(!fam)} title="家族構成の年齢に合う情報だけを表示">わが家向け</button>
@@ -90,17 +90,17 @@ export function InfoView() {
 						const g = p.cat === "event" ? goCount(p) : null;
 						return (
 							<button key={p.id} className={`post ${evPast(p) ? "is-past" : ""}`} onClick={() => openModal(<PostDetail id={p.id} />)}>
-								{p.cat === "event" ? <DateBox p={p} /> : p.photo ? <span className="pthumb"><Photo pid={p.photo} /></span> : null}
+								{p.cat === "event" && evStart(p) ? <DateBox p={p} /> : p.photo ? <span className="pthumb"><Photo pid={p.photo} /></span> : null}
 								<span className="pmain">
 									<span className="meta-row">
 										<CatPill cat={p.cat} />
 										{p.kind && <Pill cls="tgt">{p.kind}</Pill>}
 										{forMyKids(d, me, p) && <Pill cls="fam">わが家向け</Pill>}
 										{p.owner !== me && p.createdAt > infoPrev && <Pill cls="new">新着</Pill>}
-										{evPast(p) && <Pill cls="done">終了</Pill>}
+										{evPast(p) && <Pill cls="done">{isFunding(p) ? "締切済み" : "終了"}</Pill>}
 									</span>
 									<h3>{p.title}</h3>
-									{p.cat === "event" && <span style={{ fontSize: 13 }}>{evDateStr(p)}{p.event?.place ? ` ・ ${p.event.place}` : ""}</span>}
+									{p.cat === "event" && (evDateStr(p) || p.event?.place) && <span style={{ fontSize: 13 }}>{[evDateStr(p), p.event?.place].filter(Boolean).join(" ・ ")}</span>}
 									<span className="excerpt">{p.body}</span>
 									<span className="pfoot">
 										<span>{nameOf(d, p.owner)}（{hhLabel(d, householdOf(d, p.owner))}）</span>
@@ -148,7 +148,7 @@ export function PostDetail({ id }: { id: string }) {
 
 	return (
 		<Modal
-			title={p.cat === "event" ? "地域イベント" : p.cat === "edu" ? "教育" : "農業"}
+			title={CATS[p.cat]?.label ?? "情報"}
 			onClose={closeModal}
 			footer={<>
 				{mine && <button className="btn" onClick={() => openModal(<PostForm existing={p} />)}>編集</button>}
@@ -161,12 +161,12 @@ export function PostDetail({ id }: { id: string }) {
 				<CatPill cat={p.cat} />
 				{p.kind && <Pill cls="tgt">{p.kind}</Pill>}
 				{forMyKids(d, me, p) && <Pill cls="fam">わが家向け</Pill>}
-				{past && <Pill cls="done">終了</Pill>}
+				{past && <Pill cls="done">{isFunding(p) ? "締切済み" : "終了"}</Pill>}
 			</div>
 			<h3 style={{ fontSize: 19 }}>{p.title}</h3>
 			{p.cat === "event" && p.event && (
 				<dl className="evbox">
-					<dt>日時</dt><dd>{evDateStr(p)}</dd>
+					{evStart(p) && <><dt>{isFunding(p) ? "締切日" : "日時"}</dt><dd>{evDateStr(p, false)}</dd></>}
 					{p.event.place && <><dt>場所</dt><dd>{p.event.place}</dd></>}
 					{p.targets?.length > 0 && <><dt>対象</dt><dd>{p.targets.join("・")}</dd></>}
 					{p.event.capacity && <><dt>定員</dt><dd>{p.event.capacity}人</dd></>}

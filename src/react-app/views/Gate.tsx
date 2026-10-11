@@ -58,7 +58,7 @@ export function LoginGate() {
 					</div>
 					{mode === "login" ? <LoginForm /> : <InviteForm />}
 				</div>
-				<p className="gate-note">ログインは家族ひとりずつです。運営や家族から届いた招待コードで登録してください。パスワードを忘れたときは、家族か運営に「再設定コード」を発行してもらってください。</p>
+				<p className="gate-note">ログインは家族ひとりずつです。運営や家族から届いた招待コードで登録してください。パスワードを忘れたときは、運営に「再設定コード」を発行してもらってください。</p>
 			</div>
 		</div>
 	);

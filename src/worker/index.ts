@@ -1,5 +1,5 @@
 import { handleAdmin, handleAuth, handleFamily } from "./accounts";
-import { currentSession, rateLimit } from "./auth";
+import { currentSession, edgeAllow, rateAdd, rateLimit, type Limiter } from "./auth";
 import { authorize, buildStatements, sync, type Op } from "./db";
 import { NOTIFY_OK, Notifier } from "./notifier";
 
@@ -11,7 +11,9 @@ export { Notifier };
  * - PHOTOS:   R2（写真）
  * - AUTH:     KV（ログイン状態・ログイン失敗の回数）
  * - NOTIFIER: Durable Object（リアルタイム通知）
+ * - RL_AUTH / RL_AUTH_ALL / RL_USER: Rate Limiting（メモリ上の回数制限。D1 の無料枠を守る）
  * - ADMIN_SETUP_CODE: 最初の管理者を作るときの合言葉（secret）
+ * - PASSWORD_PEPPER:  パスワードに混ぜる秘密の値（secret。一度決めたら変えない）
  */
 interface AppEnv {
 	DB: D1Database;
@@ -19,7 +21,24 @@ interface AppEnv {
 	AUTH: KVNamespace;
 	NOTIFIER: DurableObjectNamespace<Notifier>;
 	ADMIN_SETUP_CODE?: string;
+	PASSWORD_PEPPER?: string;
+	RL_AUTH?: Limiter;
+	RL_AUTH_ALL?: Limiter;
+	RL_USER?: Limiter;
 }
+
+/**
+ * 無料枠（D1：1日 読み取り500万行・書き込み10万行）を1人で使い切らせないための上限
+ * - 1回の変更送信に入れられる操作の数
+ * - 1人が1日に D1 へ書ける文の数
+ * - 全件に近い読み直し（6時間より前から／初回）の1日の回数
+ */
+const OPS_PER_REQUEST = 100;
+const WRITES_PER_DAY = 3000;
+const HEAVY_SYNC_PER_DAY = 60;
+const HEAVY_SYNC_AGE = 6 * 60 * 60 * 1000;
+const DAY = 24 * 60 * 60;
+const BUSY = "操作が多すぎます。少し時間をおいてから試してください。";
 
 const PHOTO_ID = /^[A-Za-z0-9_-]{1,80}$/;
 const PHOTO_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -82,7 +101,7 @@ export default {
 
 			const managed = (await handleAdmin(request, env, url, s)) ?? (await handleFamily(request, env, url, s));
 			if (managed) {
-				if (request.method === "POST" && managed.ok) notify(env, ctx, Date.now());
+				if (request.method === "POST" && managed.ok && !managed.headers.has("X-Kaga-Dry-Run")) notify(env, ctx, Date.now());
 				return managed;
 			}
 
@@ -90,20 +109,30 @@ export default {
 			if (path === "/api/sync" && request.method === "GET") {
 				const rawSince = Number(url.searchParams.get("since"));
 				const since = Number.isFinite(rawSince) ? Math.max(0, rawSince) : 0;
+				if (!(await edgeAllow(env.RL_USER, "sync:" + s.userId))) return json({ error: BUSY }, 429);
+				// 全件に近い読み直しは重いので、1日の回数を D1 で数える
+				if (since < Date.now() - HEAVY_SYNC_AGE && (await rateLimit(env, "heavy:" + s.userId, HEAVY_SYNC_PER_DAY, DAY))) {
+					return json({ error: "読み込みが多すぎます。明日まで待つか、運営に連絡してください。" }, 429);
+				}
 				return json(await sync(env.DB, since, s.userId, s.householdId));
 			}
 
 			// 変更
 			if (path === "/api/ops" && request.method === "POST") {
-				if (await rateLimit(env, "ops:" + s.userId, 240)) return json({ error: "しばらく時間をおいてから試してください。" }, 429);
+				if (!(await edgeAllow(env.RL_USER, "ops:" + s.userId))) return json({ error: BUSY }, 429);
 				const raw = await request.text();
 				if (raw.length > 300_000) return json({ error: "送信データが大きすぎます" }, 413);
 				let body: { ops?: Op[] } | null = null;
 				try { body = JSON.parse(raw) as { ops?: Op[] }; } catch { body = null; }
 				if (!body || !Array.isArray(body.ops)) return json({ error: "bad request" }, 400);
+				if (body.ops.length > OPS_PER_REQUEST) return json({ error: "一度に送る変更が多すぎます" }, 413);
 				const now = Date.now();
-				const allowed = await authorize(env.DB, body.ops.slice(0, 200), s);
+				const allowed = await authorize(env.DB, body.ops, s);
 				const stmts = buildStatements(env.DB, allowed, now);
+				// 1人が1日に書ける量の上限（書く前に数える）
+				if (stmts.length && (await rateAdd(env, "writes:" + s.userId, stmts.length, DAY)) > WRITES_PER_DAY) {
+					return json({ error: "今日の書き込みの上限に達しました。明日また試してください。" }, 429);
+				}
 				for (let i = 0; i < stmts.length; i += 50) await env.DB.batch(stmts.slice(i, i + 50));
 				if (stmts.length) notify(env, ctx, now);
 				return json({ ok: true, now, rejected: body.ops.length - allowed.length });
@@ -112,11 +141,13 @@ export default {
 			// リアルタイム通知（WebSocket）
 			if (path === "/api/ws") {
 				if (request.headers.get("Origin") !== url.origin) return json({ error: "forbidden" }, 403);
+				if (!(await edgeAllow(env.RL_USER, "ws:" + s.userId))) return json({ error: BUSY }, 429);
 				return notifier(env).fetch(new Request(`https://notifier/ws/${encodeURIComponent(s.userId)}`, request));
 			}
 
 			// 写真（R2）。表示はログイン中なら誰でも、削除はアップロードした人か管理者だけ
 			if (path === "/api/photo" && request.method === "POST") {
+				if (!(await edgeAllow(env.RL_USER, "photo:" + s.userId))) return json({ error: BUSY }, 429);
 				if (await rateLimit(env, "photo:" + s.userId, 60, 24 * 60 * 60)) return json({ error: "画像のアップロードが多すぎます。時間をおいて試してください。" }, 429);
 				const len = Number(request.headers.get("Content-Length") || 0);
 				if (len > MAX_PHOTO) return json({ error: "画像が大きすぎます" }, 413);

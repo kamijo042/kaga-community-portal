@@ -54,4 +54,8 @@ export const adminApi = {
 	invite: (userId: string) => apiJson<Invite>("/api/admin/invite", { userId }),
 	update: (userId: string, patch: { disabled?: boolean; role?: "member" | "admin" }) =>
 		apiJson<{ ok: true }>("/api/admin/account", { userId, ...patch }),
+	/** confirm なし：消える件数だけ返す／confirm: true：削除する */
+	deleteHousehold: (householdId: string, confirm = false) =>
+		apiJson<HouseholdFootprint & { name: string; ok?: true }>("/api/admin/household/delete", { householdId, confirm }),
 };
+export type HouseholdFootprint = { people: number; logins: number; jobs: number; items: number; posts: number; threads: number; ledger: number };

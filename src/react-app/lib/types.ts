@@ -71,7 +71,7 @@ export type Thread = {
 
 export type Message = { id: string; from: string; t: number; text: string; sys?: boolean };
 
-export type PostCat = "edu" | "farm" | "event";
+export type PostCat = "farm" | "edu" | "bousai" | "event";
 
 export type EventInfo = {
 	date: string;

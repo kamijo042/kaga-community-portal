@@ -155,16 +155,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
 		const ops = diffOps(syncedRef.current, next);
 		syncedRef.current = structuredClone(next);
 		if (!ops.length) return;
-		queueRef.current = queueRef.current
-			.then(() => api("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ops }) }))
-			.then(async (r) => {
-				if (!r.ok) throw new Error("ops " + r.status);
-				const { rejected } = (await r.json()) as { rejected?: number };
-				setSaveError(false);
-				// 権限がなく保存されなかった変更があれば、サーバーの状態に戻す
-				if (rejected) { cursorRef.current = 0; void pull(); }
-			})
-			.catch(() => setSaveError(true));
+		// サーバーは1回100件まで。多いときは分けて送る
+		for (let i = 0; i < ops.length; i += 100) {
+			const chunk = ops.slice(i, i + 100);
+			queueRef.current = queueRef.current
+				.then(() => api("/api/ops", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ops: chunk }) }))
+				.then(async (r) => {
+					if (!r.ok) throw new Error("ops " + r.status);
+					const { rejected } = (await r.json()) as { rejected?: number };
+					setSaveError(false);
+					// 権限がなく保存されなかった変更があれば、サーバーの状態に戻す
+					if (rejected) { cursorRef.current = 0; void pull(); }
+				})
+				.catch(() => setSaveError(true));
+		}
 	}, [pull]);
 
 	const logout = useCallback(async () => {

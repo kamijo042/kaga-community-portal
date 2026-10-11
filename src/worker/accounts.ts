@@ -1,19 +1,19 @@
 import {
-	INVITE_TTL_MS, burnTime, checkLoginId, clearCookie, clearRate, cookieOf, createSession, currentSession, destroySession,
-	hashPassword, newInviteCode, normalizeCode, passwordProblem, rateLimit, sessionCookie, sha256, sameSecret, verifyPassword,
+	INVITE_TTL_MS, burnTime, checkLoginId, clearCookie, clearRate, clientNet, cookieOf, createSession, currentSession, destroySession, edgeAllow,
+	hashPassword, needsRehash, newInviteCode, normalizeCode, passwordProblem, rateCount, rateHit, sessionCookie, sha256, sameSecret, verifyPassword,
 	type AuthEnv, type Session,
 } from "./auth";
 
 /**
  * /api/auth/*   … ログイン・ログアウト・初期設定・招待の受け取り・パスワード変更
- * /api/family/* … 家族のログイン発行（同じ世帯の家族なら誰でも）
- * /api/admin/*  … 管理者による世帯の招待・再設定コード・停止
+ * /api/family/* … 家族へのログイン発行（同じ世帯の家族なら誰でも。ただし「まだログインが無い家族」だけ）
+ * /api/admin/*  … 管理者による世帯の招待・再設定コード・停止・世帯の削除
  *
  * 世帯は管理者だけが作れる（1世帯につき1回）。家族はその世帯の中に「人」として追加する。
  * ログインは人ごと。ログインを持たない家族（赤ちゃんなど）も登録できる。
  */
 
-type Env = AuthEnv;
+type Env = AuthEnv & { PHOTOS?: R2Bucket };
 type Body = Record<string, unknown>;
 
 const json = (data: unknown, status = 200, headers: Record<string, string> = {}) =>
@@ -104,7 +104,14 @@ async function accountRows(env: Env, householdId: string | null) {
 export async function handleAuth(request: Request, env: Env, url: URL): Promise<Response | null> {
 	const path = url.pathname;
 	const method = request.method;
-	const ip = request.headers.get("CF-Connecting-IP") ?? "local";
+	const net = clientNet(request);
+	const LOCKED = "ログインに続けて失敗したため、15分ほどロックしています。";
+	const BUSY = "アクセスが集中しています。少し時間をおいてから試してください。";
+
+	// ログイン前に使える入口は、D1 に触る前にメモリ上の回数制限で止める（無料枠を使い切らせない）
+	if (method === "POST" && /^\/api\/auth\/(setup|login|invite|accept)$/.test(path)) {
+		if (!(await edgeAllow(env.RL_AUTH, "auth:" + net)) || !(await edgeAllow(env.RL_AUTH_ALL, "auth"))) return fail(BUSY, 429);
+	}
 
 	if (path === "/api/auth/me" && method === "GET") {
 		const s = await currentSession(env, request);
@@ -117,8 +124,8 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 		const b = await readBody(request);
 		if ((await accountCount(env)) > 0) return fail("初期設定はすでに完了しています。", 409);
 		if (!env.ADMIN_SETUP_CODE) return fail("サーバーに ADMIN_SETUP_CODE が設定されていません。README の手順で設定してください。", 503);
-		if (await rateLimit(env, "setup:" + ip, 10)) return fail("しばらく時間をおいてから試してください。", 429);
-		if (!(await sameSecret(str(b.setupCode), env.ADMIN_SETUP_CODE))) return fail("初期設定コードが違います。", 403);
+		if ((await rateCount(env, "setup:" + net)) >= 10) return fail("しばらく時間をおいてから試してください。", 429);
+		if (!(await sameSecret(str(b.setupCode), env.ADMIN_SETUP_CODE))) { await rateHit(env, "setup:" + net); return fail("初期設定コードが違います。", 403); }
 		const loginId = checkLoginId(b.loginId);
 		if (!loginId) return fail(LOGIN_ID_HELP);
 		const pwErr = passwordProblem(b.password);
@@ -137,7 +144,7 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 				insertHousehold(env, hid, { ...h, name: defaultHouseholdName(str(h.name, 100), name) }, now),
 				insertPerson(env, uid, hid, { ...person, relation: "世帯主" }, now),
 				env.DB.prepare("INSERT INTO accounts (user_id,household_id,login_id,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-					.bind(uid, hid, loginId, await hashPassword(b.password as string), "admin", now, now),
+					.bind(uid, hid, loginId, await hashPassword(env, b.password as string), "admin", now, now),
 			]);
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
@@ -151,18 +158,22 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 		const b = await readBody(request);
 		const loginId = checkLoginId(b.loginId);
 		const password = typeof b.password === "string" ? b.password : "";
-		// IP全体は緩め（同じ回線の人が巻き込まれにくい）。IDごとの試行は厳しく、ただしそのIPからだけ数える
-		if (await rateLimit(env, "login:ip:" + ip, 30)) return fail("ログインに続けて失敗したため、15分ほどロックしています。", 429);
-		const pair = loginId ? "login:" + ip + ":" + loginId : "";
-		if (pair && (await rateLimit(env, pair, 10))) return fail("ログインに続けて失敗したため、15分ほどロックしています。", 429);
+		// 回線（IPv6 は /64）× ログインID ごとに、失敗だけを D1 で数える。回線全体の連打は上のメモリ制限で止める
+		const pair = "login:" + net + ":" + (loginId ?? "-");
+		const fails = await rateCount(env, pair);
+		if (fails >= 10) return fail(LOCKED, 429);
 		const acc = loginId
 			? await env.DB.prepare("SELECT user_id, password_hash, disabled FROM accounts WHERE login_id = ?").bind(loginId)
 				.first<{ user_id: string; password_hash: string; disabled: number }>()
 			: null;
-		const ok = acc ? await verifyPassword(password, acc.password_hash) : (await burnTime(password), false);
-		if (!acc || !ok) return fail("ログインIDかパスワードが違います。", 401);
+		const ok = acc ? await verifyPassword(env, password, acc.password_hash) : (await burnTime(env, password), false);
+		if (!acc || !ok) { await rateHit(env, pair); return fail("ログインIDかパスワードが違います。", 401); }
 		if (acc.disabled) return fail("このアカウントは利用停止中です。運営にお問い合わせください。", 403);
-		if (pair) await clearRate(env, pair);
+		if (fails > 0) await clearRate(env, pair);
+		// ペッパー導入前のハッシュは、正しいパスワードが分かったこのときに作り直す
+		if (needsRehash(env, acc.password_hash)) {
+			await env.DB.prepare("UPDATE accounts SET password_hash = ? WHERE user_id = ?").bind(await hashPassword(env, password), acc.user_id).run();
+		}
 		return json({ ok: true }, 200, { "Set-Cookie": await startSession(env, url, acc.user_id) });
 	}
 
@@ -174,9 +185,9 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 	// 招待コードの確認（誰あてのコードかを見せる）
 	if (path === "/api/auth/invite" && method === "POST") {
 		const b = await readBody(request);
-		if (await rateLimit(env, "inv:" + ip, 30)) return fail("しばらく時間をおいてから試してください。", 429);
+		if ((await rateCount(env, "inv:" + net)) >= 30) return fail("しばらく時間をおいてから試してください。", 429);
 		const inv = await findInvite(env, b.code);
-		if (!inv) return fail("招待コードが正しくないか、期限が切れています。", 404);
+		if (!inv) { await rateHit(env, "inv:" + net); return fail("招待コードが正しくないか、期限が切れています。", 404); }
 		const p = await env.DB.prepare("SELECT p.name, p.relation, h.name AS household_name, h.district FROM people p JOIN households h ON h.id = p.household_id WHERE p.id = ?")
 			.bind(inv.user_id).first<Body>();
 		const acc = await env.DB.prepare("SELECT login_id FROM accounts WHERE user_id = ?").bind(inv.user_id).first<{ login_id: string }>();
@@ -191,9 +202,9 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 	// 招待コードでログインを作る／パスワードを再設定する
 	if (path === "/api/auth/accept" && method === "POST") {
 		const b = await readBody(request);
-		if (await rateLimit(env, "inv:" + ip, 30)) return fail("しばらく時間をおいてから試してください。", 429);
+		if ((await rateCount(env, "inv:" + net)) >= 30) return fail("しばらく時間をおいてから試してください。", 429);
 		const inv = await findInvite(env, b.code);
-		if (!inv) return fail("招待コードが正しくないか、期限が切れています。", 404);
+		if (!inv) { await rateHit(env, "inv:" + net); return fail("招待コードが正しくないか、期限が切れています。", 404); }
 		const pwErr = passwordProblem(b.password);
 		if (pwErr) return fail(pwErr);
 		const person = await env.DB.prepare("SELECT id FROM people WHERE id = ?").bind(inv.user_id).first();
@@ -210,13 +221,17 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 		// 先に「使用済み」にしてからパスワードを書く。同時に2回使われない
 		const claimed = await env.DB.prepare("UPDATE invites SET used_at = ? WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?").bind(now, inv.code_hash, now).run();
 		if (!claimed.meta.changes) return fail("招待コードが正しくないか、期限が切れています。", 404);
-		const hash = await hashPassword(b.password as string);
+		const hash = await hashPassword(env, b.password as string);
 		try {
 			if (existing) {
 				await env.DB.prepare("UPDATE accounts SET password_hash = ?, session_epoch = session_epoch + 1, updated_at = ? WHERE user_id = ?").bind(hash, now, inv.user_id).run();
 			} else {
-				await env.DB.prepare("INSERT INTO accounts (user_id,household_id,login_id,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
-					.bind(inv.user_id, inv.household_id, loginId, hash, "member", now, now).run();
+				await env.DB.batch([
+					env.DB.prepare("INSERT INTO accounts (user_id,household_id,login_id,password_hash,role,created_at,updated_at) VALUES (?,?,?,?,?,?,?)")
+						.bind(inv.user_id, inv.household_id, loginId, hash, "member", now, now),
+					// ログインを持ったので、他の世帯にも名前・写真を見せる（差分同期で配り直す）
+					env.DB.prepare("UPDATE people SET updated_at = ? WHERE id = ?").bind(now, inv.user_id),
+				]);
 			}
 		} catch { return fail("このログインIDはすでに使われています。別のIDで、新しい招待コードを発行してもらってください。", 409); }
 		return json({ ok: true }, 200, { "Set-Cookie": await startSession(env, url, inv.user_id) });
@@ -225,15 +240,14 @@ export async function handleAuth(request: Request, env: Env, url: URL): Promise<
 	if (path === "/api/auth/password" && method === "POST") {
 		const s = await currentSession(env, request);
 		if (!s) return fail("ログインしてください。", 401);
-		if (await rateLimit(env, "pw:" + s.userId, 10)) return fail("しばらく時間をおいてから試してください。", 429);
+		if ((await rateCount(env, "pw:" + s.userId)) >= 10) return fail("しばらく時間をおいてから試してください。", 429);
 		const b = await readBody(request);
 		const acc = await env.DB.prepare("SELECT password_hash FROM accounts WHERE user_id = ?").bind(s.userId).first<{ password_hash: string }>();
-		if (!acc || !(await verifyPassword(String(b.current ?? ""), acc.password_hash))) return fail("今のパスワードが違います。", 403);
-		await clearRate(env, "pw:" + s.userId);
+		if (!acc || !(await verifyPassword(env, String(b.current ?? ""), acc.password_hash))) { await rateHit(env, "pw:" + s.userId); return fail("今のパスワードが違います。", 403); }
 		const pwErr = passwordProblem(b.next);
 		if (pwErr) return fail(pwErr);
 		await env.DB.prepare("UPDATE accounts SET password_hash = ?, session_epoch = session_epoch + 1, updated_at = ? WHERE user_id = ?")
-			.bind(await hashPassword(b.next as string), Date.now(), s.userId).run();
+			.bind(await hashPassword(env, b.next as string), Date.now(), s.userId).run();
 		return json({ ok: true }, 200, { "Set-Cookie": await startSession(env, url, s.userId) });
 	}
 
@@ -249,16 +263,15 @@ export async function handleFamily(request: Request, env: Env, url: URL, s: Sess
 	if (path === "/api/family/accounts" && request.method === "GET") {
 		return json({ accounts: await accountRows(env, s.householdId) });
 	}
-	// 家族にログインを発行する（すでにあればパスワード再設定コード）
+	// 家族にログインを発行する（まだログインが無い家族だけ）。
+	// すでにログインがある家族のパスワード再設定は運営だけ（家族が再設定コードを出すと、その家族になりすませるため）
 	if (path === "/api/family/invite" && request.method === "POST") {
 		const b = await readBody(request);
 		const p = await getPerson(env, str(b.userId));
 		if (!p || p.household_id !== s.householdId) return fail("同じ世帯の家族にだけ発行できます。", 403);
 		if (p.id === s.userId) return fail("自分のパスワードは「パスワードを変更」から変えてください。");
-		const acc = await env.DB.prepare("SELECT role, disabled FROM accounts WHERE user_id = ?").bind(p.id).first<{ role: string; disabled: number }>();
-		if (acc?.disabled) return fail("利用停止中のアカウントには発行できません。", 403);
-		// 家族が管理者のパスワードを書き換えて、管理者としてログインするのを防ぐ
-		if (acc?.role === "admin" && s.role !== "admin") return fail("管理者の再設定コードは、ほかの管理者に依頼してください。", 403);
+		const acc = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE user_id = ?").bind(p.id).first();
+		if (acc) return fail("すでにログインがある家族のパスワード再設定は、運営に依頼してください。", 403);
 		return json(await issueInvite(env, p, s.userId));
 	}
 	return fail("not found", 404);
@@ -321,5 +334,93 @@ export async function handleAdmin(request: Request, env: Env, url: URL, s: Sessi
 		return json({ ok: true });
 	}
 
+	// 世帯をまるごと削除（テスト用の世帯の片付けなど）。自分の世帯は消せない
+	// confirm が true でなければ、消える件数だけを返す
+	if (path === "/api/admin/household/delete" && request.method === "POST") {
+		const b = await readBody(request);
+		const hid = str(b.householdId);
+		if (!SAFE_ID.test(hid)) return fail("世帯が見つかりません。", 404);
+		if (hid === s.householdId) return fail("自分の世帯は削除できません。");
+		const h = await env.DB.prepare("SELECT id, name FROM households WHERE id = ?").bind(hid).first<{ id: string; name: string }>();
+		if (!h) return fail("世帯が見つかりません。", 404);
+		const summary = await householdFootprint(env, hid);
+		if (b.confirm !== true) return json({ name: h.name, ...summary.counts }, 200, { "X-Kaga-Dry-Run": "1" });
+		const now = Date.now();
+		await env.DB.batch(deleteHouseholdStatements(env, hid, now));
+		if (env.PHOTOS && summary.photos.length) {
+			const keys = summary.photos.map((id) => "photos/" + id);
+			for (let i = 0; i < keys.length; i += 1000) { try { await env.PHOTOS.delete(keys.slice(i, i + 1000)); } catch (e) { console.error(e); } }
+		}
+		return json({ ok: true, name: h.name, ...summary.counts });
+	}
+
 	return fail("not found", 404);
+}
+
+// ---------- 世帯の削除 ----------
+// 世帯の人（P）と、その人たちが関わる相談（T）
+const P = "(SELECT id FROM people WHERE household_id = ?1)";
+const T = `(SELECT id FROM threads WHERE owner IN ${P} OR other IN ${P})`;
+const PHOTO_ID = /^[A-Za-z0-9_-]{1,80}$/;
+
+/** 消える件数と、R2 から消す写真 */
+async function householdFootprint(env: Env, hid: string) {
+	const c = (sql: string) => env.DB.prepare(`SELECT COUNT(*) AS n FROM ${sql}`).bind(hid);
+	const [people, logins, jobs, items, posts, threads, ledger, pics] = await env.DB.batch([
+		c("people WHERE household_id = ?1"),
+		c("accounts WHERE household_id = ?1"),
+		c(`jobs WHERE owner IN ${P}`),
+		c(`items WHERE owner IN ${P}`),
+		c(`posts WHERE owner IN ${P}`),
+		c(`threads WHERE id IN ${T}`),
+		c(`ledger WHERE payer IN ${P} OR payee IN ${P}`),
+		env.DB.prepare(
+			`SELECT j.value AS id FROM items i, json_each(i.photos) j WHERE i.owner IN ${P}
+			 UNION SELECT photo FROM posts WHERE owner IN ${P} AND photo IS NOT NULL
+			 UNION SELECT avatar FROM people WHERE household_id = ?1 AND avatar IS NOT NULL`,
+		).bind(hid),
+	]);
+	const n = (r: D1Result) => Number((r.results?.[0] as { n?: number } | undefined)?.n ?? 0);
+	return {
+		counts: { people: n(people), logins: n(logins), jobs: n(jobs), items: n(items), posts: n(posts), threads: n(threads), ledger: n(ledger) },
+		photos: ((pics.results ?? []) as { id: unknown }[]).map((r) => String(r.id)).filter((id) => PHOTO_ID.test(id)),
+	};
+}
+
+/**
+ * 世帯と、その世帯の人が持つものをすべて消す（1つのトランザクション）。
+ * ほかの人の画面からも消えるように、消した行は tombstones に記録する。
+ * ログイン中の端末は、アカウントが無くなるので次の通信でログアウトになる。
+ */
+function deleteHouseholdStatements(env: Env, hid: string, now: number) {
+	const q = (sql: string) => env.DB.prepare(sql).bind(hid);
+	const tomb = (tbl: string, idExpr: string, from: string) =>
+		env.DB.prepare(`INSERT OR REPLACE INTO tombstones (tbl, id, deleted_at) SELECT '${tbl}', ${idExpr}, ?2 FROM ${from}`).bind(hid, now);
+	return [
+		// 相談とメッセージ（メッセージは相談IDで消したことを伝える）
+		tomb("threads", "id", `threads WHERE id IN ${T}`),
+		tomb("messages", "id", `threads WHERE id IN ${T}`),
+		q(`DELETE FROM messages WHERE thread_id IN ${T}`),
+		q(`DELETE FROM reads WHERE thread_id IN ${T} OR user_id IN ${P}`),
+		q(`DELETE FROM threads WHERE id IN ${T}`),
+		// イベントの参加表明（この世帯の表明と、この世帯のイベントへの表明）
+		tomb("rsvps", "post_id || '|' || household_id", `rsvps WHERE household_id = ?1 OR post_id IN (SELECT id FROM posts WHERE owner IN ${P})`),
+		q(`DELETE FROM rsvps WHERE (household_id = ?1 OR post_id IN (SELECT id FROM posts WHERE owner IN ${P}))`),
+		// 仕事・出品・情報・石の記録
+		...(["jobs", "items", "posts"] as const).flatMap((t) => [
+			tomb(t, "id", `${t} WHERE owner IN ${P}`),
+			q(`DELETE FROM ${t} WHERE owner IN ${P}`),
+		]),
+		tomb("ledger", "id", `ledger WHERE payer IN ${P} OR payee IN ${P}`),
+		q(`DELETE FROM ledger WHERE payer IN ${P} OR payee IN ${P}`),
+		// ログイン・招待・既読時刻
+		q(`DELETE FROM seen WHERE user_id IN ${P}`),
+		q("DELETE FROM invites WHERE household_id = ?1"),
+		q("DELETE FROM accounts WHERE household_id = ?1"),
+		// 人と世帯
+		tomb("people", "id", "people WHERE household_id = ?1"),
+		q("DELETE FROM people WHERE household_id = ?1"),
+		tomb("households", "id", "households WHERE id = ?1"),
+		q("DELETE FROM households WHERE id = ?1"),
+	];
 }

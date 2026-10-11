@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { Dot, Modal, Pill } from "../components/ui";
-import { adminApi, ApiError, type AccountRow } from "../lib/api";
+import { adminApi, ApiError, type AccountRow, type HouseholdFootprint } from "../lib/api";
 import { useApp } from "../lib/app";
 import { useData } from "../lib/store";
 import { ago } from "../lib/util";
 
-/** 管理者だけ：新しい世帯の招待・再設定コード・利用停止 */
+/** 管理者だけ：新しい世帯の招待・再設定コード・利用停止・世帯の削除 */
 export function AccountsAdmin() {
 	const { user, d } = useData();
 	const { openModal, toast } = useApp();
@@ -23,6 +23,13 @@ export function AccountsAdmin() {
 	};
 	const update = async (r: AccountRow, patch: { disabled?: boolean; role?: "member" | "admin" }) => {
 		try { await adminApi.update(r.userId, patch); load(); toast("変更しました"); } catch (e) { toast((e as Error).message); }
+	};
+
+	const askDelete = async (g: { id: string; name: string }) => {
+		try {
+			const f = await adminApi.deleteHousehold(g.id);
+			openModal(<DeleteHouseholdModal id={g.id} name={f.name} f={f} onDone={() => { load(); toast(`${f.name}を削除しました`); }} />);
+		} catch (e) { toast((e as Error).message); }
 	};
 
 	// 世帯ごとにまとめる
@@ -46,7 +53,8 @@ export function AccountsAdmin() {
 						<thead><tr><th>世帯・家族</th><th>ログインID</th><th>状態</th><th>最終ログイン</th><th /></tr></thead>
 						{groups.map((g) => (
 							<tbody key={g.id}>
-								<tr className="grp"><td colSpan={5}><span className="acc-name"><Dot id={g.id} /><b>{g.name}</b><small>{g.district || "地区未設定"} ・ {g.rows.length}人</small></span></td></tr>
+								<tr className="grp"><td colSpan={5}><div className="grp-cell"><span className="acc-name"><Dot id={g.id} /><b>{g.name}</b><small>{g.district || "地区未設定"} ・ {g.rows.length}人</small></span>
+									{g.id !== user.householdId && <button className="btn small ghost danger grp-del" onClick={() => askDelete(g)}>世帯を削除</button>}</div></td></tr>
 								{g.rows.map((r) => (
 									<tr key={r.userId}>
 										<td className="l"><span className="acc-person">{r.name}<small>{r.relation}</small></span></td>
@@ -74,6 +82,35 @@ export function AccountsAdmin() {
 				</div>
 			)}
 		</section>
+	);
+}
+
+function DeleteHouseholdModal({ id, name, f, onDone }: { id: string; name: string; f: HouseholdFootprint; onDone: () => void }) {
+	const { closeModal } = useApp();
+	const [typed, setTyped] = useState("");
+	const [err, setErr] = useState("");
+	const [busy, setBusy] = useState(false);
+	const parts = [
+		`家族 ${f.people}人（ログイン ${f.logins}）`,
+		f.jobs && `仕事 ${f.jobs}件`, f.items && `出品 ${f.items}件`, f.posts && `情報 ${f.posts}件`,
+		f.threads && `相談 ${f.threads}件（相手側の履歴も消えます）`, f.ledger && `石の流通の記録 ${f.ledger}件`,
+	].filter(Boolean) as string[];
+	const run = async () => {
+		setBusy(true); setErr("");
+		try { await adminApi.deleteHousehold(id, true); closeModal(); onDone(); }
+		catch (e) { setErr((e as Error).message); setBusy(false); }
+	};
+	return (
+		<Modal title="世帯を削除" onClose={closeModal} footer={<>
+			<button className="btn ghost" onClick={closeModal}>キャンセル</button>
+			<button className="btn primary danger" id="hh-del-run" disabled={busy || typed.trim() !== name} onClick={run}>{busy ? "削除中…" : "完全に削除する"}</button>
+		</>}>
+			<p><b>{name}</b> と、次のものをすべて削除します。<b>元に戻せません。</b></p>
+			<ul className="del-list">{parts.map((x) => <li key={x}>{x}</li>)}</ul>
+			<p className="hint-p">一時的に使えなくするだけなら、削除ではなく各メンバーの「停止」を使ってください。</p>
+			<div className="field"><label htmlFor="hh-del-name">確認のため世帯名「{name}」を入力</label><input type="text" id="hh-del-name" value={typed} onChange={(e) => setTyped(e.target.value)} autoFocus /></div>
+			{err && <p className="err">{err}</p>}
+		</Modal>
 	);
 }
 
