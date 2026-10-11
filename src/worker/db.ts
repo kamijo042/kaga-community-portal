@@ -40,6 +40,13 @@ function shortList(v: unknown, maxItems: number, maxLen: number) {
 	const xs = Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").map((x) => x.slice(0, maxLen)).filter(Boolean).slice(0, maxItems) : [];
 	return JSON.stringify(xs);
 }
+/** フリマの払い方。値段の入れ方と食い違うときは、入っている値段に合わせる */
+function payModeOf(d: Doc) {
+	const st = stoneOrNull(d.priceStone) !== null, yen = stoneOrNull(d.priceYen) !== null;
+	const m = String(d.payMode);
+	if (st && yen) return m === "both" ? "both" : "either";
+	return yen ? "yen" : "stone";
+}
 /** 予定の日付（YYYY-MM-DD）。形が違えば日付なし */
 const plausibleEvDate = (v: unknown) => { const s = str(v, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; };
 /** 流通の日付。未来すぎる日や壊れた文字列は拒否する */
@@ -55,7 +62,7 @@ const toDoc = {
 	households: (r: Row) => ({ id: r.id, name: r.name, district: r.district, note: r.note, createdAt: r.created_at, updatedAt: r.updated_at }),
 	people: (r: Row) => ({ id: r.id, householdId: r.household_id, name: r.name, relation: r.relation, birthYear: r.birth_year, avatar: r.avatar ?? null, createdAt: r.created_at, updatedAt: r.updated_at }),
 	jobs: (r: Row) => ({ id: r.id, owner: r.owner, type: r.type === "request" ? "request" : "offer", wantDate: r.want_date ?? "", title: r.title, desc: r.description, price: r.price, negotiable: !!r.negotiable, active: !!r.active, createdAt: r.created_at, updatedAt: r.updated_at }),
-	items: (r: Row) => ({ id: r.id, owner: r.owner, name: r.name, desc: r.description, priceStone: r.price_stone, priceYen: r.price_yen, photos: parseArr(r.photos), status: r.status, ...(r.buyer ? { buyer: r.buyer } : {}), ...(r.done_at ? { doneAt: r.done_at } : {}), createdAt: r.created_at, updatedAt: r.updated_at }),
+	items: (r: Row) => ({ id: r.id, owner: r.owner, name: r.name, desc: r.description, priceStone: r.price_stone, priceYen: r.price_yen, payMode: r.pay_mode ?? null, photos: parseArr(r.photos), status: r.status, ...(r.buyer ? { buyer: r.buyer } : {}), ...(r.done_at ? { doneAt: r.done_at } : {}), createdAt: r.created_at, updatedAt: r.updated_at }),
 	posts: (r: Row) => ({
 		id: r.id, owner: r.owner, cat: r.cat, kind: r.kind, title: r.title, body: r.body, link: r.link, targets: parseArr(r.targets), photo: r.photo ?? null,
 		event: r.cat === "event" || r.ev_date || r.ev_start || r.ev_place ? { date: r.ev_date ?? "", start: r.ev_start ?? "", end: r.ev_end ?? "", place: r.ev_place ?? "", capacity: r.ev_capacity ?? null, bring: r.ev_bring ?? "" } : null,
@@ -164,10 +171,10 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 					break;
 				case "items":
 					if (!ok(d.owner)) continue;
-					p(`INSERT INTO items (id,owner,name,description,price_stone,price_yen,photos,status,buyer,done_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+					p(`INSERT INTO items (id,owner,name,description,price_stone,price_yen,pay_mode,photos,status,buyer,done_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
 					   ON CONFLICT(id) DO UPDATE SET name=excluded.name, description=excluded.description, price_stone=excluded.price_stone,
-					   price_yen=excluded.price_yen, photos=excluded.photos, status=excluded.status, buyer=excluded.buyer, done_at=excluded.done_at, updated_at=excluded.updated_at`,
-					d.id, d.owner, str(d.name, 100), str(d.desc), stoneOrNull(d.priceStone), stoneOrNull(d.priceYen), photoList(d.photos),
+					   price_yen=excluded.price_yen, pay_mode=excluded.pay_mode, photos=excluded.photos, status=excluded.status, buyer=excluded.buyer, done_at=excluded.done_at, updated_at=excluded.updated_at`,
+					d.id, d.owner, str(d.name, 100), str(d.desc), stoneOrNull(d.priceStone), stoneOrNull(d.priceYen), payModeOf(d), photoList(d.photos),
 					["open", "nego", "done"].includes(String(d.status)) ? d.status : "open", ok(d.buyer) ? d.buyer : null, int(d.doneAt), created, now);
 					break;
 				case "posts": {

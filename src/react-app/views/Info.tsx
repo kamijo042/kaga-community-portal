@@ -8,6 +8,9 @@ import { useData } from "../lib/store";
 import type { Post, PostCat } from "../lib/types";
 import { ago, WD, safeHttpUrl } from "../lib/util";
 
+/** 一覧では場所の1行目だけを出す（全文は詳細で） */
+const firstLine = (s?: string) => (s ?? "").split(/\r?\n/).map((x) => x.trim()).find(Boolean) ?? "";
+
 function DateBox({ p }: { p: Post }) {
 	const d = evStart(p);
 	if (!d) return null;
@@ -56,7 +59,7 @@ export function InfoView() {
 									<DateBox p={p} />
 									<span className="ev-main">
 										<span className="ev-title">{p.title}</span>
-										<span className="ev-sub">{isFunding(p) ? "クラウドファンディング締切" : [p.cat !== "event" ? CATS[p.cat]?.label : "", p.event?.start, p.event?.place].filter(Boolean).join(" ・ ") || "時間・場所は詳細へ"}</span>
+										<span className="ev-sub">{isFunding(p) ? "クラウドファンディング締切" : [p.cat !== "event" ? CATS[p.cat]?.label : "", p.event?.start, firstLine(p.event?.place)].filter(Boolean).join(" ・ ") || "時間・場所は詳細へ"}</span>
 										{p.cat === "event" && <span className="ev-sub">参加 {g.hh}世帯{g.people ? `（${g.people}人）` : ""}{p.rsvps?.[householdOf(d, me) ?? ""]?.s === "go" && <b style={{ color: "var(--accent)" }}> ・ 参加予定</b>}</span>}
 									</span>
 								</button>
@@ -100,7 +103,7 @@ export function InfoView() {
 										{evPast(p) && <Pill cls="done">{isFunding(p) ? "締切済み" : "終了"}</Pill>}
 									</span>
 									<h3>{p.title}</h3>
-									{(evDateStr(p) || p.event?.place) && <span style={{ fontSize: 13 }}>{[evDateStr(p), p.event?.place].filter(Boolean).join(" ・ ")}</span>}
+									{(evDateStr(p) || p.event?.place) && <span style={{ fontSize: 13 }}>{[evDateStr(p), firstLine(p.event?.place)].filter(Boolean).join(" ・ ")}</span>}
 									<span className="excerpt">{p.body}</span>
 									<span className="pfoot">
 										<span>{nameOf(d, p.owner)}（{hhLabel(d, householdOf(d, p.owner))}）</span>
@@ -168,7 +171,7 @@ export function PostDetail({ id }: { id: string }) {
 			{hasSchedule && p.event && (
 				<dl className="evbox">
 					{evStart(p) && <><dt>{isFunding(p) ? "締切日" : "日時"}</dt><dd>{evDateStr(p, false)}</dd></>}
-					{p.event.place && <><dt>場所</dt><dd>{p.event.place}</dd></>}
+					{p.event.place && <><dt>場所</dt><dd className="multiline">{p.event.place}</dd></>}
 					{p.targets?.length > 0 && <><dt>対象</dt><dd>{p.targets.join("・")}</dd></>}
 					{p.event.capacity && <><dt>定員</dt><dd>{p.event.capacity}人</dd></>}
 					{p.event.bring && <><dt>持ち物</dt><dd>{p.event.bring}</dd></>}

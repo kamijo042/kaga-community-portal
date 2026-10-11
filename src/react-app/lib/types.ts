@@ -40,6 +40,8 @@ export type Job = {
 
 export type ItemStatus = "open" | "nego" | "done";
 
+/** フリマの払い方 */
+export type PayMode = "stone" | "yen" | "either" | "both";
 export type Item = {
 	id: string;
 	owner: string;
@@ -47,6 +49,8 @@ export type Item = {
 	desc: string;
 	priceStone: number | null;
 	priceYen: number | null;
+	/** 払い方：石だけ／円だけ／石か円のどちらでも／石と円を合わせて（古いデータは null。値段の入れ方から決める） */
+	payMode?: PayMode | null;
 	/** 旧データ互換（石の値段） */
 	price?: number;
 	photos: string[];

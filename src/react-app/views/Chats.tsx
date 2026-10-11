@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CatPill, Dot, Empty, JobTypePill, NegPill, Prices, StatusPill, Stone } from "../components/ui";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
-import { counterpart, homeOf, isUnread, nameOf, itemStone, KIND_LABEL, myThreads, roleOf } from "../lib/domain";
+import { counterpart, homeOf, isUnread, nameOf, itemStone, KIND_LABEL, myThreads, payModeOf, roleOf } from "../lib/domain";
 import { useData } from "../lib/store";
 import { ago, clock, fmt, todayStr } from "../lib/util";
 import { PostDetail } from "./Info";
@@ -76,7 +76,7 @@ export function ChatDrawer({ tid }: { tid: string }) {
 
 	const send = () => { const x = text.trim(); if (!x) return; actions.send(tid, x); setText(""); };
 	const openDeal = () => {
-		setAmt(String(job ? job.price : it ? itemStone(it) ?? 0 : 0));
+		setAmt(String(job ? job.price : it ? (payModeOf(it) === "yen" ? 0 : itemStone(it) ?? 0) : 0));
 		setDate(todayStr());
 		setDealOpen(true);
 	};
@@ -147,7 +147,7 @@ export function ChatDrawer({ tid }: { tid: string }) {
 							<label htmlFor="deal-date">日付<input type="date" id="deal-date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} /></label>
 							<button className="btn small primary" id="deal-ok" onClick={okDeal}>{job ? "成立を記録する" : "交渉成立にする"}</button>
 							<button className="btn small ghost" onClick={() => setDealOpen(false)}>やめる</button>
-							<p>{job ? "話し合って決まった石の額を記録します。" : "受け渡す石の額を記録すると、出品は終了します。"}記録は石の流通量に反映され、運営が確認します。</p>
+							<p>{job ? "話し合って決まった石の額を記録します。" : it && payModeOf(it) === "either" ? "受け渡す石の額を記録すると、出品は終了します（円で払う場合は0石）。" : it && payModeOf(it) === "yen" ? "円での受け渡しなので0石で記録します。記録すると出品は終了します。" : "受け渡す石の額を記録すると、出品は終了します。"}記録は石の流通量に反映され、運営が確認します。</p>
 						</div>
 					)}
 				</div>

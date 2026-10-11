@@ -1,5 +1,5 @@
 import { CONFIG } from "../config";
-import type { Item, LedgerEntry, Post, PostCat, State, Thread, ThreadKind } from "./types";
+import type { Item, LedgerEntry, PayMode, Post, PostCat, State, Thread, ThreadKind } from "./types";
 import { WD } from "./util";
 
 // ---- 世帯と人 ----
@@ -24,6 +24,13 @@ export function familyOf(d: State, householdId: string | null | undefined) {
 export const familySize = (d: State, householdId: string | null | undefined) => familyOf(d, householdId).length;
 
 // ---- フリマの値段 ----
+/** 出品の払い方（古いデータは値段の入れ方から決める） */
+export function payModeOf(i: Item): PayMode {
+	const st = itemStone(i) !== null && itemStone(i) !== undefined, yen = i.priceYen !== null && i.priceYen !== undefined;
+	if (st && yen) return i.payMode === "both" ? "both" : "either";
+	return yen ? "yen" : "stone";
+}
+export const PAY_LABEL: Record<PayMode, string> = { stone: "石で", yen: "円で", either: "石か円（どちらでも）", both: "石＋円（合わせて）" };
 export function itemStone(i: Item): number | null {
 	// 旧データ（price のみ）にも対応
 	return i.priceStone !== undefined ? i.priceStone : (i.price ?? null);

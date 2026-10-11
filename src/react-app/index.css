@@ -528,3 +528,8 @@ img.dot.avatar{object-fit:cover;background:var(--sunk)}
 .hhinv-title{font-size:14px;font-weight:700;margin:8px 0 2px}
 .chip-sep{width:1px;align-self:stretch;background:var(--line);margin:4px 2px}
 .job.is-req{border-color:color-mix(in srgb,var(--evt) 35%,var(--line))}
+.price-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.price-row .price-in{flex:1 1 140px}
+.price-join{font-weight:700;color:var(--muted)}
+.prices .sep.plus{font-weight:700}
+.multiline{white-space:pre-line}

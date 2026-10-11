@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { CATS, homeOf, itemStone, nameOf } from "../lib/domain";
+import { CATS, homeOf, itemStone, nameOf, payModeOf } from "../lib/domain";
 import { useData } from "../lib/store";
 import type { Item, ItemStatus, PostCat } from "../lib/types";
 import { colorOf, fmt } from "../lib/util";
@@ -25,11 +25,14 @@ export function Yen({ n }: { n: number }) {
 export function Prices({ item }: { item: Item }) {
 	const st = itemStone(item);
 	const yen = item.priceYen;
+	const mode = payModeOf(item);
+	// 「どちらでも」は「または」、「合わせて」は「＋」でつなぎ、どちらの意味かを言葉で示す
 	return (
-		<span className="prices">
-			{st !== null && st !== undefined && <Stone n={st} />}
-			{st !== null && st !== undefined && yen !== null && yen !== undefined && <span className="sep">／</span>}
-			{yen !== null && yen !== undefined && <Yen n={yen} />}
+		<span className={`prices pay-${mode}`}>
+			{mode !== "yen" && <Stone n={st} />}
+			{mode === "either" && <span className="sep">または</span>}
+			{mode === "both" && <span className="sep plus">＋</span>}
+			{mode !== "stone" && <Yen n={yen ?? 0} />}
 		</span>
 	);
 }

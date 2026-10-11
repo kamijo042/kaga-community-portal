@@ -1,12 +1,19 @@
 import { useRef, useState } from "react";
 import { ConfirmButton, Modal, Photo } from "../components/ui";
 import { useApp } from "../lib/app";
-import { itemStone } from "../lib/domain";
+import { itemStone, PAY_LABEL, payModeOf } from "../lib/domain";
 import { useData } from "../lib/store";
-import type { Item } from "../lib/types";
+import type { Item, PayMode } from "../lib/types";
 import { compressImage, uid } from "../lib/util";
 
 type Ph = { pid?: string; data?: string };
+
+const PAY_HINT: Record<PayMode, string> = {
+	stone: "石だけで受け渡します。",
+	yen: "円（現金）だけで受け渡します。",
+	either: "買う人が、石か円のどちらかを選んで払います。",
+	both: "石と円を合わせて払ってもらいます（例：500円＋5石）。",
+};
 
 export function ItemForm({ existing }: { existing?: Item }) {
 	const { mutate, me, photos } = useData();
@@ -16,6 +23,8 @@ export function ItemForm({ existing }: { existing?: Item }) {
 	const [desc, setDesc] = useState(existing?.desc ?? "");
 	const [stone, setStone] = useState(st0 === null || st0 === undefined ? "" : String(st0));
 	const [yen, setYen] = useState(existing?.priceYen === null || existing?.priceYen === undefined ? "" : String(existing.priceYen));
+	const [mode, setMode] = useState<PayMode>(existing ? payModeOf(existing) : "stone");
+	const useStone = mode !== "yen", useYen = mode !== "stone";
 	const [phs, setPhs] = useState<Ph[]>(() => (existing?.photos ?? []).map((pid) => ({ pid })));
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState(false);
@@ -36,8 +45,9 @@ export function ItemForm({ existing }: { existing?: Item }) {
 	const save = async () => {
 		if (!me) return;
 		if (!name.trim()) return setErr("商品名を入力してください。");
-		if (stone.trim() === "" && yen.trim() === "") return setErr("値段を石か円のどちらかに入力してください。");
-		if (bad(stone) || bad(yen)) return setErr("値段は0以上の整数で入力してください。");
+		if (useStone && stone.trim() === "") return setErr("石の値段を入力してください。");
+		if (useYen && yen.trim() === "") return setErr("円の値段を入力してください。");
+		if ((useStone && bad(stone)) || (useYen && bad(yen))) return setErr("値段は0以上の整数で入力してください。");
 		setBusy(true);
 		try {
 			const pids: string[] = [];
@@ -49,7 +59,7 @@ export function ItemForm({ existing }: { existing?: Item }) {
 				delete base.price;
 				d.items[id] = {
 					...base, id, owner: me, name: name.trim(), desc: desc.trim(),
-					priceStone: stone.trim() === "" ? null : +stone, priceYen: yen.trim() === "" ? null : +yen,
+					priceStone: useStone ? +stone : null, priceYen: useYen ? +yen : null, payMode: mode,
 					photos: pids, status: existing?.status ?? "open",
 					createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(),
 				};
@@ -100,12 +110,22 @@ export function ItemForm({ existing }: { existing?: Item }) {
 				<div className="field"><label htmlFor="it-name">商品名</label><input type="text" id="it-name" maxLength={60} value={name} onChange={(e) => setName(e.target.value)} placeholder="例：子ども用自転車 16インチ" /></div>
 				<div className="field"><label htmlFor="it-desc">説明</label><textarea id="it-desc" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="状態、サイズ、使用期間、受け渡しの場所や時間など" /></div>
 				<div className="field">
-					<span className="lbl">値段</span>
-					<div className="two">
-						<div className="price-in"><input type="number" id="it-stone" min={0} step={1} inputMode="numeric" aria-label="値段（石）" value={stone} onChange={(e) => setStone(e.target.value)} placeholder="0" /><span>石</span></div>
-						<div className="price-in"><input type="number" id="it-yen" min={0} step={1} inputMode="numeric" aria-label="値段（円）" value={yen} onChange={(e) => setYen(e.target.value)} placeholder="0" /><span>円</span></div>
+					<span className="lbl">払い方</span>
+					<div className="radio-row pay-modes">
+						{(["stone", "yen", "either", "both"] as const).map((m) => (
+							<label key={m}><input type="radio" name="it-pay" id={`it-pay-${m}`} checked={mode === m} onChange={() => setMode(m)} />{PAY_LABEL[m]}</label>
+						))}
 					</div>
-					<span className="hint">石と円の両方を書けます。片方だけでも大丈夫です。</span>
+					<span className="hint">{PAY_HINT[mode]}</span>
+				</div>
+				<div className="field">
+					<span className="lbl">値段</span>
+					<div className="price-row">
+						{useStone && <div className="price-in"><input type="number" id="it-stone" min={0} step={1} inputMode="numeric" aria-label="値段（石）" value={stone} onChange={(e) => setStone(e.target.value)} placeholder="0" /><span>石</span></div>}
+						{mode === "either" && <span className="price-join">または</span>}
+						{mode === "both" && <span className="price-join">＋</span>}
+						{useYen && <div className="price-in"><input type="number" id="it-yen" min={0} step={1} inputMode="numeric" aria-label="値段（円）" value={yen} onChange={(e) => setYen(e.target.value)} placeholder="0" /><span>円</span></div>}
+					</div>
 				</div>
 				{err && <p className="err">{err}</p>}
 			</form>

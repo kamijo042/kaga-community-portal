@@ -96,10 +96,7 @@ export function PostForm({ existing, defaultCat = "event" }: { existing?: Post; 
 				<div className="field"><label htmlFor="po-title">タイトル</label><input type="text" id="po-title" maxLength={80} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例：秋の稲刈り体験 参加者募集" /></div>
 				{(
 					<div className="field" style={{ gap: 10 }}>
-						<div className="two">
-							<div className="field"><label htmlFor="po-date">{funding ? "締切日（任意）" : "日付（任意）"}</label><input type="date" id="po-date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
-							<div className="field"><label htmlFor="po-place">場所（任意）</label><input type="text" id="po-place" value={place} onChange={(e) => setPlace(e.target.value)} placeholder="例：山代温泉 公民館" /></div>
-						</div>
+						<div className="field"><label htmlFor="po-date">{funding ? "締切日（任意）" : "日付（任意）"}</label><input type="date" id="po-date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
 						{!funding && <><div className="two">
 							<div className="field"><label htmlFor="po-start">開始（任意）</label><input type="time" id="po-start" value={start} onChange={(e) => setStart(e.target.value)} /></div>
 							<div className="field"><label htmlFor="po-end">終了（任意）</label><input type="time" id="po-end" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
@@ -108,6 +105,7 @@ export function PostForm({ existing, defaultCat = "event" }: { existing?: Post; 
 							<div className="field"><label htmlFor="po-cap">定員（人・任意）</label><input type="number" id="po-cap" min={1} value={cap} onChange={(e) => setCap(e.target.value)} /></div>
 							<div className="field"><label htmlFor="po-bring">持ち物（任意）</label><input type="text" id="po-bring" value={bring} onChange={(e) => setBring(e.target.value)} placeholder="例：軍手、長靴" /></div>
 						</div>}</>}
+						<div className="field"><label htmlFor="po-place">場所（任意）</label><textarea id="po-place" rows={2} style={{ minHeight: 0 }} value={place} onChange={(e) => setPlace(e.target.value)} placeholder={"例：山代温泉 公民館\n（駐車場は裏手にあります）"} /><span className="hint">改行できます。</span></div>
 					</div>
 				)}
 				{cat !== "farm" && (
