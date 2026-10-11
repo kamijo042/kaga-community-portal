@@ -119,6 +119,7 @@ function Shell() {
 				</main>
 				<p className="local-note wrap">
 					<span className={`live ${connected ? "on" : ""}`} />{connected ? "リアルタイムで同期しています" : "再接続しています…"}。石のやり取りと受け渡しは対面で行います。
+					<a className="foot-link" href="/privacy.html">個人情報の取り扱いとセキュリティ</a>
 				</p>
 			</>
 		);

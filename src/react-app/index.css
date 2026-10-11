@@ -515,3 +515,12 @@ img.dot.avatar{object-fit:cover;background:var(--sunk)}
 .avatar-big:hover .avatar-cam{background:var(--sunk)}
 .avatar-side{display:flex;flex-direction:column;gap:6px;min-width:0}
 .avatar-side b{font-size:14px}
+.foot-link{display:block;margin-top:6px;color:var(--muted);font-size:12.5px}
+.foot-link:hover{color:var(--ink)}
+.gate-note a{color:var(--muted)}
+.hhinv-list{border-top:1px solid var(--line-soft);margin-top:14px;padding-top:6px}
+.hhinv-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line-soft)}
+.hhinv-row:last-child{border-bottom:0}
+.hhinv-main{display:flex;flex-direction:column;margin-right:auto;min-width:0}
+.hhinv-main small{color:var(--muted);font-size:12.5px}
+.hhinv-title{font-size:14px;font-weight:700;margin:8px 0 2px}

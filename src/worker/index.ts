@@ -1,4 +1,4 @@
-import { handleAdmin, handleAuth, handleFamily } from "./accounts";
+import { handleAdmin, handleAuth, handleFamily, handleInvites } from "./accounts";
 import { currentSession, edgeAllow, rateAdd, rateLimit, type Limiter } from "./auth";
 import { authorize, buildStatements, sync, type Op } from "./db";
 import { NOTIFY_OK, Notifier } from "./notifier";
@@ -99,7 +99,7 @@ export default {
 			const s = await currentSession(env, request);
 			if (!s) return json({ error: "login" }, 401);
 
-			const managed = (await handleAdmin(request, env, url, s)) ?? (await handleFamily(request, env, url, s));
+			const managed = (await handleAdmin(request, env, url, s)) ?? (await handleFamily(request, env, url, s)) ?? (await handleInvites(request, env, url, s));
 			if (managed) {
 				if (request.method === "POST" && managed.ok && !managed.headers.has("X-Kaga-Dry-Run")) notify(env, ctx, Date.now());
 				return managed;
@@ -114,7 +114,7 @@ export default {
 				if (since < Date.now() - HEAVY_SYNC_AGE && (await rateLimit(env, "heavy:" + s.userId, HEAVY_SYNC_PER_DAY, DAY))) {
 					return json({ error: "読み込みが多すぎます。明日まで待つか、運営に連絡してください。" }, 429);
 				}
-				return json(await sync(env.DB, since, s.userId, s.householdId));
+				return json(await sync(env.DB, since, s.userId, s.householdId, s.role === "admin"));
 			}
 
 			// 変更

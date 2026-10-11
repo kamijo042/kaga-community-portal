@@ -3,6 +3,7 @@ import { authApi } from "../lib/api";
 import { useApp } from "../lib/app";
 import { householdOf, homeOf, nameOf } from "../lib/domain";
 import { PersonForm } from "../forms/HouseholdForm";
+import { InviteHouseholdModal } from "../views/InviteHousehold";
 import { useData } from "../lib/store";
 import { IconMenu } from "./icons";
 import { Dot, Modal } from "./ui";
@@ -36,6 +37,7 @@ export function AccountMenu({ unread = 0 }: { unread?: number }) {
 					<button role="menuitem" id="edit-profile" onClick={pick(() => { const p = d.people[me]; const hid = householdOf(d, me); if (p && hid) openModal(<PersonForm householdId={hid} existing={p} hasLogin title="プロフィール" />); })}>プロフィール（写真・名前）</button>
 					<button role="menuitem" id="menu-chat" onClick={pick(() => goTab("chat"))}>相談{unread > 0 && <span className="menu-badge">{unread}</span>}</button>
 					<button role="menuitem" id="menu-home" onClick={pick(() => goTab("home"))}>世帯と家族{user.role === "admin" ? "・アカウント管理" : ""}</button>
+					<button role="menuitem" id="menu-invite" onClick={pick(() => openModal(<InviteHouseholdModal />))}>新しい世帯を招待</button>
 					<button role="menuitem" onClick={pick(() => openModal(<PasswordForm />))}>パスワードを変更</button>
 					<hr />
 					<button role="menuitem" id="logout" onClick={pick(() => void logout())}>ログアウト</button>

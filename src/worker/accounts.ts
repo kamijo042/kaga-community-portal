@@ -1,6 +1,6 @@
 import {
 	INVITE_TTL_MS, burnTime, checkLoginId, clearCookie, clearRate, clientNet, cookieOf, createSession, currentSession, destroySession, edgeAllow,
-	hashPassword, needsRehash, newInviteCode, normalizeCode, passwordProblem, rateCount, rateHit, sessionCookie, sha256, sameSecret, verifyPassword,
+	hashPassword, needsRehash, newInviteCode, normalizeCode, passwordProblem, rateCount, rateHit, rateLimit, sessionCookie, sha256, sameSecret, verifyPassword,
 	type AuthEnv, type Session,
 } from "./auth";
 
@@ -8,8 +8,9 @@ import {
  * /api/auth/*   … ログイン・ログアウト・初期設定・招待の受け取り・パスワード変更
  * /api/family/* … 家族へのログイン発行（同じ世帯の家族なら誰でも。ただし「まだログインが無い家族」だけ）
  * /api/admin/*  … 管理者による世帯の招待・再設定コード・停止・世帯の削除
+ * /api/invites/* … 会員による新しい世帯の招待（1人あたり上限あり。管理者は上限なし）
  *
- * 世帯は管理者だけが作れる（1世帯につき1回）。家族はその世帯の中に「人」として追加する。
+ * 世帯は管理者か、招待枠のある会員が作れる（1世帯につき1回）。家族はその世帯の中に「人」として追加する。
  * ログインは人ごと。ログインを持たない家族（赤ちゃんなど）も登録できる。
  */
 
@@ -88,6 +89,7 @@ async function findInvite(env: Env, code: unknown) {
 async function accountRows(env: Env, householdId: string | null) {
 	const rows = await env.DB.prepare(
 		`SELECT p.id AS user_id, p.household_id, p.name, p.relation, h.name AS household_name, h.district,
+		        (SELECT ip.name FROM people ip WHERE ip.id = h.invited_by) AS invited_by_name,
 		        a.login_id, a.role, a.disabled, a.last_login_at,
 		        (SELECT MAX(expires_at) FROM invites i WHERE i.user_id = p.id AND i.used_at IS NULL AND i.expires_at > ?) AS invite_expires
 		 FROM people p JOIN households h ON h.id = p.household_id LEFT JOIN accounts a ON a.user_id = p.id
@@ -96,7 +98,7 @@ async function accountRows(env: Env, householdId: string | null) {
 	).bind(...(householdId ? [Date.now(), householdId] : [Date.now()])).all<Body>();
 	return (rows.results ?? []).map((r) => ({
 		userId: r.user_id, householdId: r.household_id, name: r.name, relation: r.relation, householdName: r.household_name, district: r.district,
-		loginId: r.login_id ?? null, role: r.role ?? null, disabled: !!r.disabled, lastLoginAt: r.last_login_at ?? null, inviteExpiresAt: r.invite_expires ?? null,
+		invitedBy: r.invited_by_name ?? null, loginId: r.login_id ?? null, role: r.role ?? null, disabled: !!r.disabled, lastLoginAt: r.last_login_at ?? null, inviteExpiresAt: r.invite_expires ?? null,
 	}));
 }
 
@@ -278,6 +280,90 @@ export async function handleFamily(request: Request, env: Env, url: URL, s: Sess
 }
 
 // ======================================================================
+/** 会員1人が招待できる世帯の数（管理者は上限なし）。招待した世帯が削除されると枠は戻る */
+export const HOUSEHOLD_INVITES_PER_PERSON = 3;
+
+/**
+ * 新しい世帯を作り、世帯主あての招待コードを発行する（管理者・会員共通）。
+ * 同じ世帯の二重登録を防ぐ確認つき。会員の招待枠は、同時に送られても超えないよう1文で数えて作る
+ */
+async function createHousehold(env: Env, s: Session, b: Body) {
+	const admin = s.role === "admin";
+	const headName = str(b.headName, 100);
+	if (!headName) return fail("世帯主の氏名を入力してください。");
+	const name = defaultHouseholdName(str(b.name, 100), headName);
+	const district = str(b.district, 100);
+	const compact = (v: string) => v.replace(/[\s　]/g, "");
+	if (b.force !== true) {
+		const dup = await env.DB.prepare(
+			`SELECT h.name, h.district, p.name AS head FROM households h LEFT JOIN people p ON p.household_id = h.id AND p.relation = '世帯主'
+			 WHERE replace(replace(p.name,' ',''),'　','') = ? OR (h.name = ? AND h.district = ?) LIMIT 1`,
+		).bind(compact(headName), name, district).first<Body>();
+		// 会員には、まだ登録していない世帯主の名前などを見せない
+		if (dup) return fail(`同じ世帯がすでに登録されているかもしれません（${dup.name}${admin ? "・世帯主 " + (dup.head ?? "—") : ""}${dup.district ? "・" + dup.district : ""}）。家族の追加はその世帯の中で行ってください。`, 409, { duplicate: true });
+	}
+	const hid = newId("h_");
+	const uid = newId("u_");
+	const now = Date.now();
+	const limit = admin ? 1_000_000 : HOUSEHOLD_INVITES_PER_PERSON;
+	const [made] = await env.DB.batch([
+		env.DB.prepare(
+			`INSERT INTO households (id,name,head_name,head_birth,district,note,members,invited_by,created_at,updated_at)
+			 SELECT ?,?,'','',?,'','[]',?,?,? WHERE (SELECT COUNT(*) FROM households WHERE invited_by = ?) < ?`,
+		).bind(hid, name, district, s.userId, now, now, s.userId, limit),
+		env.DB.prepare(
+			`INSERT INTO people (id,household_id,name,relation,birth_year,created_at,updated_at)
+			 SELECT ?,?,?,'世帯主','',?,? WHERE EXISTS (SELECT 1 FROM households WHERE id = ?)`,
+		).bind(uid, hid, headName, now, now, hid),
+	]);
+	if (!made.meta.changes) return fail(`招待できる世帯は1人${HOUSEHOLD_INVITES_PER_PERSON}世帯までです。`, 403);
+	const inv = await issueInvite(env, { id: uid, household_id: hid, name: headName, relation: "世帯主" }, s.userId);
+	return json({ householdId: hid, userId: uid, name, ...inv });
+}
+
+/** 自分が招待した世帯の一覧と、残りの招待枠 */
+async function myHouseholdInvites(env: Env, s: Session) {
+	const rows = await env.DB.prepare(
+		`SELECT h.id, h.name, h.district, h.created_at, p.id AS head_id, p.name AS head,
+		        (SELECT 1 FROM accounts a WHERE a.user_id = p.id) AS registered,
+		        (SELECT MAX(expires_at) FROM invites i WHERE i.user_id = p.id AND i.used_at IS NULL AND i.expires_at > ?) AS invite_expires
+		 FROM households h LEFT JOIN people p ON p.household_id = h.id AND p.relation = '世帯主'
+		 WHERE h.invited_by = ? ORDER BY h.created_at DESC`,
+	).bind(Date.now(), s.userId).all<Body>();
+	const list = (rows.results ?? []).map((r) => ({
+		householdId: r.id, name: r.name, district: r.district, headId: r.head_id ?? null, headName: r.head ?? "—",
+		registered: !!r.registered, inviteExpiresAt: r.invite_expires ?? null, createdAt: r.created_at,
+	}));
+	const admin = s.role === "admin";
+	return { list, limit: admin ? null : HOUSEHOLD_INVITES_PER_PERSON, remaining: admin ? null : Math.max(0, HOUSEHOLD_INVITES_PER_PERSON - list.length) };
+}
+
+export async function handleInvites(request: Request, env: Env, url: URL, s: Session): Promise<Response | null> {
+	const path = url.pathname;
+	if (!path.startsWith("/api/invites/")) return null;
+
+	if (path === "/api/invites/households" && request.method === "GET") return json(await myHouseholdInvites(env, s));
+	if (path === "/api/invites/households" && request.method === "POST") {
+		// 作りすぎ・総当たりを防ぐ（1日20回まで。重複確認で弾かれた分も数える）
+		if (await rateLimit(env, "hhinv:" + s.userId, 20, 24 * 60 * 60)) return fail("今日はこれ以上招待できません。明日また試してください。", 429);
+		return createHousehold(env, s, await readBody(request));
+	}
+	// 自分が招待した世帯の世帯主が、まだ登録していないときだけ招待コードを出し直せる
+	if (path === "/api/invites/reissue" && request.method === "POST") {
+		const b = await readBody(request);
+		const row = await env.DB.prepare(
+			`SELECT p.id, p.household_id, p.name, p.relation FROM households h JOIN people p ON p.household_id = h.id AND p.relation = '世帯主'
+			 WHERE h.id = ? AND h.invited_by = ? LIMIT 1`,
+		).bind(str(b.householdId), s.userId).first<Person>();
+		if (!row) return fail("あなたが招待した世帯ではありません。", 403);
+		const acc = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE user_id = ?").bind(row.id).first();
+		if (acc) return fail("この世帯はすでに登録が済んでいます。", 409);
+		return json(await issueInvite(env, row, s.userId));
+	}
+	return fail("not found", 404);
+}
+
+// ======================================================================
 export async function handleAdmin(request: Request, env: Env, url: URL, s: Session): Promise<Response | null> {
 	const path = url.pathname;
 	if (!path.startsWith("/api/admin/")) return null;
@@ -289,28 +375,7 @@ export async function handleAdmin(request: Request, env: Env, url: URL, s: Sessi
 
 	// 新しい世帯を作り、世帯主あての招待コードを発行（同じ世帯の二重登録はしない）
 	if (path === "/api/admin/households" && request.method === "POST") {
-		const b = await readBody(request);
-		const headName = str(b.headName, 100);
-		if (!headName) return fail("世帯主の氏名を入力してください。");
-		const name = defaultHouseholdName(str(b.name, 100), headName);
-		const district = str(b.district, 100);
-		const compact = (v: string) => v.replace(/[\s　]/g, "");
-		if (b.force !== true) {
-			const dup = await env.DB.prepare(
-				`SELECT h.name, h.district, p.name AS head FROM households h LEFT JOIN people p ON p.household_id = h.id AND p.relation = '世帯主'
-				 WHERE replace(replace(p.name,' ',''),'　','') = ? OR (h.name = ? AND h.district = ?) LIMIT 1`,
-			).bind(compact(headName), name, district).first<Body>();
-			if (dup) return fail(`同じ世帯がすでに登録されているかもしれません（${dup.name}・世帯主 ${dup.head ?? "—"}${dup.district ? "・" + dup.district : ""}）。家族の追加はその世帯の中で行ってください。`, 409, { duplicate: true });
-		}
-		const hid = newId("h_");
-		const uid = newId("u_");
-		const now = Date.now();
-		await env.DB.batch([
-			insertHousehold(env, hid, { name, district }, now),
-			insertPerson(env, uid, hid, { name: headName, relation: "世帯主" }, now),
-		]);
-		const inv = await issueInvite(env, { id: uid, household_id: hid, name: headName, relation: "世帯主" }, s.userId);
-		return json({ householdId: hid, userId: uid, name, ...inv });
+		return createHousehold(env, s, await readBody(request));
 	}
 
 	if (path === "/api/admin/invite" && request.method === "POST") {

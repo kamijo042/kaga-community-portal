@@ -33,17 +33,17 @@ export function AccountsAdmin() {
 	};
 
 	// 世帯ごとにまとめる
-	const groups: { id: string; name: string; district: string; rows: AccountRow[] }[] = [];
+	const groups: { id: string; name: string; district: string; invitedBy: string | null; rows: AccountRow[] }[] = [];
 	for (const r of rows ?? []) {
 		let g = groups.find((x) => x.id === r.householdId);
-		if (!g) groups.push((g = { id: r.householdId, name: r.householdName, district: r.district, rows: [] }));
+		if (!g) groups.push((g = { id: r.householdId, name: r.householdName, district: r.district, invitedBy: r.invitedBy ?? null, rows: [] }));
 		g.rows.push(r);
 	}
 
 	return (
 		<section className="card admin-card">
 			<div className="admin-head">
-				<div><h3 style={{ margin: 0 }}>アカウント管理（運営）</h3><p className="hint-p">管理者だけに表示されます。新しく移住してきた世帯を招待すると、世帯主あての招待コードが出ます。家族の追加は、その世帯の人が右上のメニュー →「世帯と家族」から行います。</p></div>
+				<div><h3 style={{ margin: 0 }}>アカウント管理（運営）</h3><p className="hint-p">管理者だけに表示されます。新しく移住してきた世帯を招待すると、世帯主あての招待コードが出ます（管理者は上限なし。会員は右上のメニューから1人3世帯まで招待できます）。家族の追加は、その世帯の人が右上のメニュー →「世帯と家族」から行います。</p></div>
 				<button className="btn primary small" id="admin-new" onClick={() => openModal(<NewHouseholdModal onDone={(name, code, exp) => { load(); showCode("世帯主の招待コード", name, code, exp); }} />)}>＋ 新しい世帯を招待</button>
 			</div>
 			{err && <p className="err">{err}</p>}
@@ -53,7 +53,7 @@ export function AccountsAdmin() {
 						<thead><tr><th>世帯・家族</th><th>ログインID</th><th>状態</th><th>最終ログイン</th><th /></tr></thead>
 						{groups.map((g) => (
 							<tbody key={g.id}>
-								<tr className="grp"><td colSpan={5}><div className="grp-cell"><span className="acc-name"><Dot id={g.id} /><b>{g.name}</b><small>{g.district || "地区未設定"} ・ {g.rows.length}人</small></span>
+								<tr className="grp"><td colSpan={5}><div className="grp-cell"><span className="acc-name"><Dot id={g.id} /><b>{g.name}</b><small>{g.district || "地区未設定"} ・ {g.rows.length}人{g.invitedBy ? ` ・ 招待：${g.invitedBy}` : ""}</small></span>
 									{g.id !== user.householdId && <button className="btn small ghost danger grp-del" onClick={() => askDelete(g)}>世帯を削除</button>}</div></td></tr>
 								{g.rows.map((r) => (
 									<tr key={r.userId}>

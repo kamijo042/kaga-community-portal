@@ -37,7 +37,7 @@ export const authApi = {
 
 // ---------- 家族のログイン・管理者 ----------
 export type AccountRow = {
-	userId: string; householdId: string; name: string; relation: string; householdName: string; district: string;
+	userId: string; householdId: string; name: string; relation: string; householdName: string; district: string; invitedBy?: string | null;
 	loginId: string | null; role: "member" | "admin" | null; disabled: boolean; lastLoginAt: number | null; inviteExpiresAt: number | null;
 };
 type Invite = { code: string; expiresAt: number; purpose: "new" | "reset" };
@@ -57,5 +57,13 @@ export const adminApi = {
 	/** confirm なし：消える件数だけ返す／confirm: true：削除する */
 	deleteHousehold: (householdId: string, confirm = false) =>
 		apiJson<HouseholdFootprint & { name: string; ok?: true }>("/api/admin/household/delete", { householdId, confirm }),
+};
+/** 会員による新しい世帯の招待（1人あたり上限あり。管理者は上限なし＝limit が null） */
+export type MyHouseholdInvite = { householdId: string; name: string; district: string; headId: string | null; headName: string; registered: boolean; inviteExpiresAt: number | null; createdAt: number };
+export const invitesApi = {
+	list: () => apiJson<{ list: MyHouseholdInvite[]; limit: number | null; remaining: number | null }>("/api/invites/households"),
+	create: (h: { name?: string; headName: string; district?: string; force?: boolean }) =>
+		apiJson<Invite & { householdId: string; userId: string; name: string }>("/api/invites/households", h),
+	reissue: (householdId: string) => apiJson<Invite>("/api/invites/reissue", { householdId }),
 };
 export type HouseholdFootprint = { people: number; logins: number; jobs: number; items: number; posts: number; threads: number; ledger: number };

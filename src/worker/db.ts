@@ -72,9 +72,9 @@ export type Table = keyof typeof toDoc;
 
 /**
  * since（ミリ秒）より後に変わった行を返す。
- * 相談・メッセージ・既読は、ログイン中の人（me）が関わるものだけを返す。
+ * 相談・メッセージ・既読・石の流通は、ログイン中の人（me）が関わるものだけを返す（石の流通は管理者なら全件）。
  */
-export async function sync(db: D1Database, since: number, me: string | null, myHome: string | null) {
+export async function sync(db: D1Database, since: number, me: string | null, myHome: string | null, isAdmin = false) {
 	const now = Date.now();
 	const mine = ok(me) ? me : "";
 	const home = ok(myHome) ? myHome : "";
@@ -91,7 +91,10 @@ export async function sync(db: D1Database, since: number, me: string | null, myH
 		   WHERE m.updated_at > ? AND (t.owner = ? OR t.other = ?)`, since, mine, mine),
 		q("SELECT * FROM reads WHERE updated_at > ? AND user_id = ?", since, mine),
 		q("SELECT * FROM seen WHERE updated_at > ? AND user_id = ?", since, mine),
-		q("SELECT * FROM ledger WHERE updated_at > ?", since),
+		// 石の流通は、管理者には全件、ほかの人には自分が当事者の相談の分だけ
+		isAdmin
+			? q("SELECT * FROM ledger WHERE updated_at > ?", since)
+			: q(`SELECT * FROM ledger WHERE updated_at > ? AND (payer = ? OR payee = ? OR thread_id IN (SELECT id FROM threads WHERE owner = ? OR other = ?))`, since, mine, mine, mine, mine),
 		q("SELECT tbl, id FROM tombstones WHERE deleted_at > ?", since),
 	]);
 	const tables: Table[] = ["households", "people", "jobs", "items", "posts", "rsvps", "threads", "messages", "reads", "seen", "ledger"];
