@@ -122,7 +122,7 @@ function InviteForm() {
 			</div>
 			{info.purpose === "new" && <LoginIdField value={loginId} onChange={setLoginId} />}
 			<NewPasswordFields pw={pw} setPw={setPw} pw2={pw2} setPw2={setPw2} />
-			{info.purpose === "new" && <p className="hint-p">家族構成や連絡メモは、ログインしたあと「世帯」タブで登録・変更できます。</p>}
+			{info.purpose === "new" && <p className="hint-p">家族構成や連絡メモは、ログインしたあと右上のメニュー →「世帯と家族」で登録・変更できます。</p>}
 			{err && <p className="err">{err}</p>}
 			<button className="btn primary block" id="accept-submit" disabled={busy}>{busy ? "登録中…" : info.purpose === "new" ? "登録してはじめる" : "パスワードを設定する"}</button>
 		</form>

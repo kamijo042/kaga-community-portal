@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AccountMenu } from "./components/AccountMenu";
-import { IconBag, IconChat, IconHome, IconInfo, IconJob, IconStone } from "./components/icons";
+import { IconBag, IconInfo, IconJob, IconStone } from "./components/icons";
 import { CONFIG } from "./config";
 import { AppContext, type AppCtx, type Tab } from "./lib/app";
 import { newPostCount, unreadCount } from "./lib/domain";
@@ -21,17 +21,16 @@ export default function App() {
 	);
 }
 
+/** メニューは 情報・仕事・フリマ・石（石は管理者だけ）。相談と世帯は右上のメニューから開く */
 const TABS: { id: Tab; label: string; icon: ReactNode }[] = [
 	{ id: "info", label: "情報", icon: <IconInfo /> },
 	{ id: "jobs", label: "仕事", icon: <IconJob /> },
 	{ id: "market", label: "フリマ", icon: <IconBag /> },
-	{ id: "chat", label: "相談", icon: <IconChat /> },
 	{ id: "flow", label: "石", icon: <IconStone /> },
-	{ id: "home", label: "世帯", icon: <IconHome /> },
 ];
 
 function Shell() {
-	const { d, me, mutate, status, saveError, connected } = useData();
+	const { d, me, user, mutate, status, saveError, connected } = useData();
 	const [tab, setTab] = useState<Tab>("info");
 	const [chatId, setChatId] = useState<string | null>(null);
 	const [modal, setModal] = useState<ReactNode>(null);
@@ -96,8 +95,8 @@ function Shell() {
 							<div><h1>{CONFIG.siteName}</h1><small>{CONFIG.tagline}</small></div>
 						</div>
 						<nav className="tabs" role="tablist" aria-label="メニュー">
-							{TABS.map((t) => {
-								const badge = t.id === "chat" ? unread : t.id === "info" && tab !== "info" ? newPosts : 0;
+							{TABS.filter((t) => t.id !== "flow" || user?.role === "admin").map((t) => {
+								const badge = t.id === "info" && tab !== "info" ? newPosts : 0;
 								return (
 									<button key={t.id} className="tab" role="tab" data-tab={t.id} aria-selected={tab === t.id} onClick={() => goTab(t.id)}>
 										<span className="tab-ic">{t.icon}{badge > 0 && <span className="badge">{badge}</span>}</span>
@@ -106,7 +105,7 @@ function Shell() {
 								);
 							})}
 						</nav>
-						<AccountMenu />
+						<AccountMenu unread={unread} />
 					</div>
 				</header>
 				{saveError && <div className="wrap"><p className="save-error">サーバーに保存できませんでした。通信状態を確認してください。次の操作のときに再送します。</p></div>}
@@ -115,7 +114,7 @@ function Shell() {
 					{tab === "jobs" && <JobsView />}
 					{tab === "market" && <MarketView />}
 					{tab === "chat" && <ChatsView />}
-					{tab === "flow" && <FlowView />}
+					{tab === "flow" && user?.role === "admin" && <FlowView />}
 					{tab === "home" && <HomeView />}
 				</main>
 				<p className="local-note wrap">

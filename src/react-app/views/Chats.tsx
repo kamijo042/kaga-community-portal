@@ -147,7 +147,7 @@ export function ChatDrawer({ tid }: { tid: string }) {
 							<label htmlFor="deal-date">日付<input type="date" id="deal-date" value={date} max={todayStr()} onChange={(e) => setDate(e.target.value)} /></label>
 							<button className="btn small primary" id="deal-ok" onClick={okDeal}>{job ? "成立を記録する" : "交渉成立にする"}</button>
 							<button className="btn small ghost" onClick={() => setDealOpen(false)}>やめる</button>
-							<p>{job ? "話し合って決まった石の額を記録します。" : "受け渡す石の額を記録すると、出品は終了します。"}記録は「石」タブの流通量に反映され、会員全員が見られます。</p>
+							<p>{job ? "話し合って決まった石の額を記録します。" : "受け渡す石の額を記録すると、出品は終了します。"}記録は石の流通量に反映され、運営が確認します。</p>
 						</div>
 					)}
 				</div>

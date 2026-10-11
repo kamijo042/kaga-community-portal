@@ -8,7 +8,7 @@ import { IconMenu } from "./icons";
 import { Dot, Modal } from "./ui";
 
 /** 右上の丸いボタンと、そのメニュー */
-export function AccountMenu() {
+export function AccountMenu({ unread = 0 }: { unread?: number }) {
 	const { d, me, user, logout } = useData();
 	const { goTab, openModal } = useApp();
 	const [open, setOpen] = useState(false);
@@ -26,7 +26,7 @@ export function AccountMenu() {
 	return (
 		<div className="who-wrap" ref={ref}>
 			<button className="who" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>
-				<IconMenu />
+				{unread > 0 && <span className="badge who-badge" aria-label={`未読の相談 ${unread}件`}>{unread}</span>}<IconMenu />
 				<span className="who-name">{nameOf(d, me)}</span>
 				<Dot id={me} />
 			</button>
@@ -34,7 +34,8 @@ export function AccountMenu() {
 				<div className="menu" role="menu">
 					<div className="menu-head"><b>{nameOf(d, me)}</b><span>{homeOf(d, me)}</span><span>ログインID：{user.loginId}{user.role === "admin" ? " ・ 管理者" : ""}</span></div>
 					<button role="menuitem" id="edit-profile" onClick={pick(() => { const p = d.people[me]; const hid = householdOf(d, me); if (p && hid) openModal(<PersonForm householdId={hid} existing={p} hasLogin title="プロフィール" />); })}>プロフィール（写真・名前）</button>
-					<button role="menuitem" onClick={pick(() => goTab("home"))}>世帯と家族{user.role === "admin" ? "・アカウント管理" : ""}</button>
+					<button role="menuitem" id="menu-chat" onClick={pick(() => goTab("chat"))}>相談{unread > 0 && <span className="menu-badge">{unread}</span>}</button>
+					<button role="menuitem" id="menu-home" onClick={pick(() => goTab("home"))}>世帯と家族{user.role === "admin" ? "・アカウント管理" : ""}</button>
 					<button role="menuitem" onClick={pick(() => openModal(<PasswordForm />))}>パスワードを変更</button>
 					<hr />
 					<button role="menuitem" id="logout" onClick={pick(() => void logout())}>ログアウト</button>
