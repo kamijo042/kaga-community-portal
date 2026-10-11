@@ -157,3 +157,32 @@ npm run dev        # http://localhost:5173 （D1・R2・DO もローカルの模
 
 - 管理者機能（不適切な投稿の非表示など）
 - 石の流通の集計を SQL で（月別・世帯別）
+
+## 世帯の削除（DB から）
+
+管理画面の「世帯を削除」を使わずに、コマンドで消す手順です。元に戻せないので、必ず 1 → 5 の順に進めます。
+
+```bash
+# 1. バックアップ（いまの DB をまるごと SQL ファイルに保存）
+npx wrangler d1 export kaga-community-portal --remote --output=backup-$(date +%Y%m%d-%H%M).sql
+
+# 2. 世帯ID を探す
+npx wrangler d1 execute kaga-community-portal --remote --command "SELECT id, name, district FROM households ORDER BY created_at"
+
+# 3. 消える中身を確認（読み取りだけ）。h_xxxx を 2 の世帯ID に置き換える
+HID=h_xxxx
+sed "s/__HID__/$HID/g" scripts/household-check.sql > /tmp/check.sql
+npx wrangler d1 execute kaga-community-portal --remote --file=/tmp/check.sql
+
+# 4. 削除（3 の内容で間違いないときだけ）
+sed "s/__HID__/$HID/g" scripts/household-delete.sql > /tmp/delete.sql
+npx wrangler d1 execute kaga-community-portal --remote --file=/tmp/delete.sql
+
+# 5. 写真を R2 から消す（3 の r2_key を 1 つずつ）
+npx wrangler r2 object delete kaga-community-photos/photos/p_xxxx --remote
+```
+
+- ログイン中の人の画面からも自動で消えます（tombstones に記録するため）。消した世帯の人は次の通信でログアウトします
+- 途中で止まっても、4 をもう一度流せば残りが消えます
+- 間違えたときは、1 のバックアップか D1 の Time Travel（`npx wrangler d1 time-travel restore`）で削除前の時点に戻せます。戻すと、その時刻より後の全員の変更も消えます
+- 自分（管理者）の世帯の ID を指定しないこと
