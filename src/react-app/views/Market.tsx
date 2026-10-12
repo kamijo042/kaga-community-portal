@@ -3,7 +3,7 @@ import { Empty, Modal, Owner, Photo, Prices, StatusPill } from "../components/ui
 import { ItemForm } from "../forms/ItemForm";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
-import { homeOf, nameOf, threadId, threadsFor } from "../lib/domain";
+import { nameOf, threadId, threadsFor } from "../lib/domain";
 import { useData } from "../lib/store";
 
 export function MarketView() {
@@ -57,7 +57,7 @@ function Browse() {
 							</div>
 							<div className="body">
 								<span className="name">{i.name}</span>
-								<span className="owner">{nameOf(d, i.owner)}{i.owner === me ? "（自分）" : ""} ・ {homeOf(d, i.owner)}</span>
+								<span className="owner">{nameOf(d, i.owner)}{i.owner === me ? "（自分）" : ""}</span>
 								<Prices item={i} />
 							</div>
 						</button>
@@ -127,7 +127,7 @@ function Mine() {
 									<h3>{i.name}</h3>
 									<div className="sub">
 										<Prices item={i} /><StatusPill s={i.status} /><span>相談 {ts.length}件</span>
-										{i.status === "done" && i.buyer && <span>成立相手：{nameOf(d, i.buyer)}（{homeOf(d, i.buyer)}）</span>}
+										{i.status === "done" && i.buyer && <span>成立相手：{nameOf(d, i.buyer)}</span>}
 									</div>
 								</div>
 								<div className="acts">

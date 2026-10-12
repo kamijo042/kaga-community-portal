@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { CATS, homeOf, itemStone, nameOf, payModeOf } from "../lib/domain";
+import { CATS, itemStone, nameOf, payModeOf } from "../lib/domain";
 import { useData } from "../lib/store";
 import type { Item, ItemStatus, PostCat } from "../lib/types";
 import { colorOf, fmt } from "../lib/util";
@@ -61,14 +61,13 @@ export function Dot({ id }: { id: string }) {
 	return <span className="dot" style={{ background: colorOf(id) }} aria-hidden="true">{ch}</span>;
 }
 
-/** 人の表示：アイコン・名前・世帯 */
+/** 人の表示：アイコン・名前（世帯名は出さない） */
 export function Owner({ id, extra }: { id: string; extra?: ReactNode }) {
 	const { d } = useData();
 	return (
 		<span className="owner">
 			<Dot id={id} />
 			<b>{nameOf(d, id)}</b>
-			<span className="owner-home">{homeOf(d, id)}</span>
 			{extra}
 		</span>
 	);

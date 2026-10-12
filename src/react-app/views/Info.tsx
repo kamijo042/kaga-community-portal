@@ -106,7 +106,7 @@ export function InfoView() {
 									{(evDateStr(p) || p.event?.place) && <span style={{ fontSize: 13 }}>{[evDateStr(p), firstLine(p.event?.place)].filter(Boolean).join(" ・ ")}</span>}
 									<span className="excerpt">{p.body}</span>
 									<span className="pfoot">
-										<span>{nameOf(d, p.owner)}（{hhLabel(d, householdOf(d, p.owner))}）</span>
+										<span>{nameOf(d, p.owner)}</span>
 										<span>{ago(p.createdAt)}</span>
 										{p.targets?.length > 0 && <span>対象：{p.targets.join("・")}</span>}
 										{g && <span>参加 {g.hh}世帯{p.event?.capacity ? ` / 定員 ${p.event.capacity}人` : ""}</span>}

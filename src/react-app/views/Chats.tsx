@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { CatPill, Dot, Empty, JobTypePill, NegPill, Prices, StatusPill, Stone } from "../components/ui";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
-import { counterpart, homeOf, isUnread, nameOf, itemStone, KIND_LABEL, myThreads, payModeOf, roleOf } from "../lib/domain";
+import { counterpart, isUnread, nameOf, itemStone, KIND_LABEL, myThreads, payModeOf, roleOf } from "../lib/domain";
 import { useData } from "../lib/store";
 import { ago, clock, fmt, todayStr } from "../lib/util";
 import { PostDetail } from "./Info";
@@ -27,7 +27,7 @@ export function ChatsView() {
 								<Dot id={other} />
 								<div className="t-main">
 									<div className="t-line1">
-										<span className="t-title">{nameOf(d, other)}</span><span className="t-home">{homeOf(d, other)}</span>
+										<span className="t-title">{nameOf(d, other)}</span>
 										<span className="kind">{KIND_LABEL[t.kind]}</span>
 										{it && <StatusPill s={it.status} />}
 										<span className="t-time" style={{ marginLeft: "auto" }}>{ago(t.lastAt || t.createdAt)}</span>
@@ -137,7 +137,7 @@ export function ChatDrawer({ tid }: { tid: string }) {
 				<div className="chat-head">
 					<div className="l1">
 						<Dot id={other} />
-						<div className="t"><h2>{nameOf(d, other)}</h2><div className="with">{homeOf(d, other)} ・ {KIND_LABEL[t.kind]}の相談 ・ {roleOf(t, me, d)}</div></div>
+						<div className="t"><h2>{nameOf(d, other)}</h2><div className="with">{KIND_LABEL[t.kind]}の相談 ・ {roleOf(t, me, d)}</div></div>
 						<button className="x" onClick={closeChat} aria-label="閉じる">×</button>
 					</div>
 					{deal}
