@@ -324,10 +324,13 @@ async function createHousehold(env: Env, s: Session, b: Body) {
 /** 自分が招待した世帯の一覧と、残りの招待枠 */
 async function myHouseholdInvites(env: Env, s: Session) {
 	const rows = await env.DB.prepare(
-		`SELECT h.id, h.name, h.district, h.created_at, p.id AS head_id, p.name AS head,
-		        (SELECT 1 FROM accounts a WHERE a.user_id = p.id) AS registered,
-		        (SELECT MAX(expires_at) FROM invites i WHERE i.user_id = p.id AND i.used_at IS NULL AND i.expires_at > ?) AS invite_expires
-		 FROM households h LEFT JOIN people p ON p.household_id = h.id AND p.relation = '世帯主'
+		// 世帯主の続柄はあとから入れ替えられるので、「最初に登録された人（招待した相手）」と「世帯に誰かログインがあるか」で見る
+		`SELECT h.id, h.name, h.district, h.created_at,
+		        (SELECT p.id FROM people p WHERE p.household_id = h.id ORDER BY p.created_at, p.id LIMIT 1) AS head_id,
+		        (SELECT p.name FROM people p WHERE p.household_id = h.id AND p.relation = '世帯主' ORDER BY p.created_at LIMIT 1) AS head,
+		        EXISTS (SELECT 1 FROM accounts a WHERE a.household_id = h.id) AS registered,
+		        (SELECT MAX(expires_at) FROM invites i WHERE i.household_id = h.id AND i.used_at IS NULL AND i.expires_at > ?) AS invite_expires
+		 FROM households h
 		 WHERE h.invited_by = ? ORDER BY h.created_at DESC`,
 	).bind(Date.now(), s.userId).all<Body>();
 	const list = (rows.results ?? []).map((r) => ({
@@ -348,15 +351,16 @@ export async function handleInvites(request: Request, env: Env, url: URL, s: Ses
 		if (await rateLimit(env, "hhinv:" + s.userId, 20, 24 * 60 * 60)) return fail("今日はこれ以上招待できません。明日また試してください。", 429);
 		return createHousehold(env, s, await readBody(request));
 	}
-	// 自分が招待した世帯の世帯主が、まだ登録していないときだけ招待コードを出し直せる
+	// 自分が招待した世帯が、まだ誰も登録していないときだけ、招待した相手（最初に登録された人）あてに出し直せる。
+	// 世帯の誰かが登録したあとは出せない（招待した人がその世帯の別の家族のログインを作れてしまうため）
 	if (path === "/api/invites/reissue" && request.method === "POST") {
 		const b = await readBody(request);
 		const row = await env.DB.prepare(
-			`SELECT p.id, p.household_id, p.name, p.relation FROM households h JOIN people p ON p.household_id = h.id AND p.relation = '世帯主'
-			 WHERE h.id = ? AND h.invited_by = ? LIMIT 1`,
+			`SELECT p.id, p.household_id, p.name, p.relation FROM households h JOIN people p ON p.household_id = h.id
+			 WHERE h.id = ? AND h.invited_by = ? ORDER BY p.created_at, p.id LIMIT 1`,
 		).bind(str(b.householdId), s.userId).first<Person>();
 		if (!row) return fail("あなたが招待した世帯ではありません。", 403);
-		const acc = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE user_id = ?").bind(row.id).first();
+		const acc = await env.DB.prepare("SELECT 1 AS x FROM accounts WHERE household_id = ?").bind(row.household_id).first();
 		if (acc) return fail("この世帯はすでに登録が済んでいます。", 409);
 		return json(await issueInvite(env, row, s.userId));
 	}

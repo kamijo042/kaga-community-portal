@@ -63,11 +63,21 @@ export function PersonForm({ householdId, existing, hasLogin, title }: { househo
 			if (avatar?.data) pid = await photos.put(avatar.data);
 			if (existing?.avatar && existing.avatar !== pid) photos.del(existing.avatar);
 			const id = existing?.id ?? uid("u_");
+			let swapped = "";
 			mutate((d) => {
+				// 世帯主は1人だけ。別の人を世帯主にしたら、今までの世帯主とは続柄を入れ替える
+				if (relation === "世帯主") {
+					for (const p of Object.values(d.people)) {
+						if (p.householdId === householdId && p.id !== id && p.relation === "世帯主") {
+							d.people[p.id] = { ...p, relation: existing && existing.relation !== "世帯主" ? existing.relation : "その他", updatedAt: Date.now() };
+							swapped = `${p.name}さんの続柄は「${d.people[p.id].relation}」に変えました`;
+						}
+					}
+				}
 				d.people[id] = { id, householdId, name: name.trim(), relation, birthYear: birthYear.trim(), avatar: pid, createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now() };
 			});
 			closeModal();
-			toast(existing ? "保存しました" : "家族を登録しました");
+			toast((existing ? "保存しました" : "家族を登録しました") + (swapped ? `（${swapped}）` : ""));
 		} catch {
 			setErr("写真を保存できませんでした。もう一度お試しください。");
 			setBusy(false);
