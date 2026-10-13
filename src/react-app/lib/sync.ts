@@ -14,7 +14,7 @@ export type SyncResult = {
 		jobs: Job[];
 		items: Item[];
 		posts: Omit<Post, "rsvps">[];
-		rsvps: { postId: string; householdId: string; s: Rsvp["s"]; n: number; at: number }[];
+		rsvps: { postId: string; householdId: string; s: Rsvp["s"]; n: number; at: number; by?: string | null }[];
 		threads: Thread[];
 		messages: (Message & { threadId: string })[];
 		reads: { userId: string; threadId: string; at: number }[];
@@ -51,7 +51,7 @@ export function applySync(s: State, r: SyncResult) {
 	for (const p of r.rows.posts) s.posts[p.id] = { ...p, rsvps: s.posts[p.id]?.rsvps ?? {} };
 	for (const x of r.rows.rsvps) {
 		const p = s.posts[x.postId];
-		if (p) (p.rsvps ??= {})[x.householdId] = { s: x.s, n: x.n, at: x.at };
+		if (p) (p.rsvps ??= {})[x.householdId] = { s: x.s, n: x.n, at: x.at, by: x.by ?? null };
 	}
 	for (const t of r.rows.threads) s.threads[t.id] = t;
 	const touched = new Set<string>();

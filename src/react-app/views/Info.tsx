@@ -3,7 +3,7 @@ import { CatPill, Empty, Modal, Owner, Photo, Pill } from "../components/ui";
 import { PostForm } from "../forms/PostForm";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
-import { CATS, evDateStr, evOrder, evPast, evStart, isFunding, familySize, forMyKids, goCount, hhLabel, householdOf, matchesFamily, myBuckets, nameOf } from "../lib/domain";
+import { acceptsRsvp, CATS, evDateStr, evOrder, evPast, evStart, isFunding, familySize, forMyKids, goCount, hhLabel, householdOf, matchesFamily, myBuckets, nameOf } from "../lib/domain";
 import { useData } from "../lib/store";
 import type { Post, PostCat } from "../lib/types";
 import { ago, WD, safeHttpUrl } from "../lib/util";
@@ -60,7 +60,7 @@ export function InfoView() {
 									<span className="ev-main">
 										<span className="ev-title">{p.title}</span>
 										<span className="ev-sub">{isFunding(p) ? "クラウドファンディング締切" : [p.cat !== "event" ? CATS[p.cat]?.label : "", p.event?.start, firstLine(p.event?.place)].filter(Boolean).join(" ・ ") || "時間・場所は詳細へ"}</span>
-										{p.cat === "event" && <span className="ev-sub">参加 {g.hh}世帯{g.people ? `（${g.people}人）` : ""}{p.rsvps?.[householdOf(d, me) ?? ""]?.s === "go" && <b style={{ color: "var(--accent)" }}> ・ 参加予定</b>}</span>}
+										{acceptsRsvp(p) && <span className="ev-sub">参加 {g.hh}世帯{g.people ? `（${g.people}人）` : ""}{p.rsvps?.[householdOf(d, me) ?? ""]?.s === "go" && <b style={{ color: "var(--accent)" }}> ・ 参加予定</b>}</span>}
 									</span>
 								</button>
 							);
@@ -90,7 +90,7 @@ export function InfoView() {
 			) : (
 				<div className="posts">
 					{list.map((p) => {
-						const g = p.cat === "event" ? goCount(p) : null;
+						const g = acceptsRsvp(p) ? goCount(p) : null;
 						return (
 							<button key={p.id} className={`post ${evPast(p) ? "is-past" : ""}`} onClick={() => openModal(<PostDetail id={p.id} />)}>
 								{evStart(p) ? <DateBox p={p} /> : p.photo ? <span className="pthumb"><Photo pid={p.photo} /></span> : null}
@@ -121,6 +121,12 @@ export function InfoView() {
 	);
 }
 
+/** 押すと「もう一度押すと外す」に変わる、2段階の確認ボタン */
+function RemoveButton({ onConfirm }: { onConfirm: () => void }) {
+	const [armed, setArmed] = useState(false);
+	return <button type="button" className={`btn small ghost ${armed ? "danger" : ""}`} onClick={() => (armed ? onConfirm() : setArmed(true))}>{armed ? "もう一度押すと外す" : "外す"}</button>;
+}
+
 export function PostDetail({ id }: { id: string }) {
 	const { d, me, mutate } = useData();
 	const { closeModal, openModal, toast } = useApp();
@@ -136,7 +142,26 @@ export function PostDetail({ id }: { id: string }) {
 	const href = p.link ? safeHttpUrl(p.link) : null;
 	const hasSchedule = p.cat === "event" || !!(p.event?.date || p.event?.start || p.event?.place);
 	const full = !!p.event?.capacity && g.people >= p.event.capacity && my?.s !== "go";
-	const goers = Object.entries(p.rsvps ?? {}).filter(([, x]) => x.s === "go");
+	const goers = Object.entries(p.rsvps ?? {}).filter(([, x]) => x.s === "go").sort((a, b) => a[1].at - b[1].at);
+	const maybes = Object.entries(p.rsvps ?? {}).filter(([, x]) => x.s === "maybe").sort((a, b) => a[1].at - b[1].at);
+	const accepting = acceptsRsvp(p);
+	const closed = !!p.rsvpClosed;
+	/** 参加者を外す（投稿者だけ） */
+	const removeRsvp = (h: string) => {
+		mutate((st) => { delete st.posts[id].rsvps?.[h]; });
+		toast(`${hhLabel(d, h)}を参加者から外しました`);
+	};
+	/** 受付の締め切り・再開（投稿者だけ） */
+	const toggleClosed = () => {
+		mutate((st) => { st.posts[id] = { ...st.posts[id], rsvpClosed: !closed, updatedAt: Date.now() }; });
+		toast(closed ? "受付を再開しました" : "受付を締め切りました");
+	};
+	/** 参加者の一覧をテキストでコピー（投稿者だけ） */
+	const copyList = async () => {
+		const lines = [`${p.title}　参加 ${g.hh}世帯・${g.people}人`, ...goers.map(([h, x], i) => `${i + 1}. ${hhLabel(d, h)}　${x.n}人${x.by ? `（申込：${nameOf(d, x.by)}）` : ""}`)];
+		if (maybes.length) lines.push("", "興味あり：" + maybes.map(([h]) => hhLabel(d, h)).join("、"));
+		try { await navigator.clipboard.writeText(lines.join("\n")); toast("参加者の一覧をコピーしました"); } catch { toast("コピーできませんでした"); }
+	};
 
 	const rsvp = (s: "go" | "maybe" | "none") => {
 		const num = Math.max(1, Math.min(20, parseInt(n, 10) || 1));
@@ -145,7 +170,7 @@ export function PostDetail({ id }: { id: string }) {
 			post.rsvps ??= {};
 			// 参加表明は世帯単位（家族の誰が押しても同じ）
 			if (s === "none") delete post.rsvps[hid];
-			else post.rsvps[hid] = { s, n: s === "go" ? num : 0, at: Date.now() };
+			else post.rsvps[hid] = { s, n: s === "go" ? num : 0, at: Date.now(), by: me };
 		});
 		toast(s === "go" ? "参加を登録しました" : s === "maybe" ? "興味ありにしました" : "取り消しました");
 	};
@@ -180,13 +205,19 @@ export function PostDetail({ id }: { id: string }) {
 			{!hasSchedule && p.targets?.length > 0 && <p style={{ fontSize: 13, color: "var(--muted)" }}>対象：{p.targets.join("・")}</p>}
 			{p.body && <p className="detail-desc">{p.body}</p>}
 			{href && <p style={{ fontSize: 14, wordBreak: "break-all" }}>参考リンク：<a href={href} target="_blank" rel="noopener noreferrer">{p.link}</a></p>}
-			{p.cat === "event" && (
+			{accepting && (
 				<div className="rsvp">
 					<div className="rs-row">
-						<b style={{ marginRight: "auto" }}>参加 {g.hh}世帯・{g.people}人{g.maybe ? ` ／ 興味あり ${g.maybe}世帯` : ""}</b>
+						<b style={{ marginRight: "auto" }}>参加 {g.hh}世帯・{g.people}人{p.event?.capacity ? ` ／ 定員 ${p.event.capacity}人` : ""}{g.maybe ? ` ／ 興味あり ${g.maybe}世帯` : ""}</b>
+						{closed && <Pill cls="off">受付終了</Pill>}
 						{my && <Pill cls={my.s === "go" ? "open" : "nego"}>{my.s === "go" ? `参加予定（${my.n}人）` : "興味あり"}</Pill>}
 					</div>
-					{past ? <p className="who-list">このイベントは終了しました。</p> : (
+					{past ? <p className="who-list">終了しました。</p> : closed ? (
+						<div className="rs-row">
+							<p className="who-list" style={{ marginRight: "auto" }}>参加の受付は締め切られました。</p>
+							{my && <button className="btn small ghost" onClick={() => rsvp("none")}>取り消す</button>}
+						</div>
+					) : (
 						<div className="rs-row">
 							<label htmlFor="rs-n" style={{ fontSize: 13 }}>人数</label>
 							<input type="number" id="rs-n" min={1} max={20} value={n} onChange={(e) => setN(e.target.value)} />
@@ -195,7 +226,32 @@ export function PostDetail({ id }: { id: string }) {
 							{my && <button className="btn small ghost" onClick={() => rsvp("none")}>取り消す</button>}
 						</div>
 					)}
-					{goers.length > 0 && <p className="who-list">参加予定：{goers.map(([hid, x]) => `${hhLabel(d, hid)}（${x.n}人）`).join("、")}</p>}
+					{(goers.length > 0 || maybes.length > 0) && (
+						<div className="rs-list" id="rs-list">
+							{goers.length > 0 && <p className="rs-head">参加予定（{goers.length}世帯）</p>}
+							{goers.map(([h, x]) => (
+								<div className="rs-person" key={h}>
+									<span className="rs-name"><b>{hhLabel(d, h)}</b>{x.by && <small>申込：{nameOf(d, x.by)}</small>}</span>
+									<span className="rs-n">{x.n}人</span>
+									{mine && <RemoveButton onConfirm={() => removeRsvp(h)} />}
+								</div>
+							))}
+							{maybes.length > 0 && <p className="rs-head">興味あり（{maybes.length}世帯）</p>}
+							{maybes.map(([h, x]) => (
+								<div className="rs-person" key={h}>
+									<span className="rs-name"><b>{hhLabel(d, h)}</b>{x.by && <small>{nameOf(d, x.by)}</small>}</span>
+									{mine && <RemoveButton onConfirm={() => removeRsvp(h)} />}
+								</div>
+							))}
+						</div>
+					)}
+					{mine && (
+						<div className="rs-row rs-admin">
+							<span className="rs-admin-lbl">主催者メニュー</span>
+							<button className="btn small" id="rs-close" onClick={toggleClosed}>{closed ? "受付を再開する" : "受付を締め切る"}</button>
+							{goers.length > 0 && <button className="btn small ghost" id="rs-copy" onClick={copyList}>一覧をコピー</button>}
+						</div>
+					)}
 				</div>
 			)}
 			<Owner id={p.owner} extra={<> ・ {ago(p.createdAt)}</>} />

@@ -91,7 +91,8 @@ export type EventInfo = {
 	bring: string;
 };
 
-export type Rsvp = { s: "go" | "maybe"; n: number; at: number };
+/** 参加表明（世帯ごと）。by は申し込んだ人（サーバーが記録） */
+export type Rsvp = { s: "go" | "maybe"; n: number; at: number; by?: string | null };
 
 export type Post = {
 	id: string;
@@ -105,6 +106,10 @@ export type Post = {
 	event: EventInfo | null;
 	photo: string | null;
 	rsvps: Record<string, Rsvp>;
+	/** 参加を受け付けるか（未設定なら地域イベントだけ受け付け） */
+	rsvpOn?: boolean;
+	/** 投稿者が受付を締め切った */
+	rsvpClosed?: boolean;
 	createdAt: number;
 	updatedAt: number;
 };

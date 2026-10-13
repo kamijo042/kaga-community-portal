@@ -121,6 +121,8 @@ export function evOrder(a: Post, b: Post) {
 	if (ra === 2) return +evStart(b)! - +evStart(a)!;
 	return b.createdAt - a.createdAt;
 }
+/** 参加を受け付けている投稿か（未設定なら地域イベントだけ） */
+export const acceptsRsvp = (p: Post) => p.rsvpOn ?? p.cat === "event";
 export function goCount(p: Post) {
 	const r = Object.values(p.rsvps ?? {});
 	const go = r.filter((x) => x.s === "go");

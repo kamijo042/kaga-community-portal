@@ -65,10 +65,11 @@ const toDoc = {
 	items: (r: Row) => ({ id: r.id, owner: r.owner, name: r.name, desc: r.description, priceStone: r.price_stone, priceYen: r.price_yen, payMode: r.pay_mode ?? null, photos: parseArr(r.photos), status: r.status, ...(r.buyer ? { buyer: r.buyer } : {}), ...(r.done_at ? { doneAt: r.done_at } : {}), createdAt: r.created_at, updatedAt: r.updated_at }),
 	posts: (r: Row) => ({
 		id: r.id, owner: r.owner, cat: r.cat, kind: r.kind, title: r.title, body: r.body, link: r.link, targets: parseArr(r.targets), photo: r.photo ?? null,
+		rsvpOn: r.rsvp_on === null || r.rsvp_on === undefined ? r.cat === "event" : !!r.rsvp_on, rsvpClosed: !!r.rsvp_closed,
 		event: r.cat === "event" || r.ev_date || r.ev_start || r.ev_place ? { date: r.ev_date ?? "", start: r.ev_start ?? "", end: r.ev_end ?? "", place: r.ev_place ?? "", capacity: r.ev_capacity ?? null, bring: r.ev_bring ?? "" } : null,
 		createdAt: r.created_at, updatedAt: r.updated_at,
 	}),
-	rsvps: (r: Row) => ({ postId: r.post_id, householdId: r.household_id, s: r.status, n: r.people, at: r.updated_at }),
+	rsvps: (r: Row) => ({ postId: r.post_id, householdId: r.household_id, s: r.status, n: r.people, at: r.updated_at, by: r.by_user ?? null }),
 	threads: (r: Row) => ({ id: r.id, kind: r.kind, refId: r.ref_id, owner: r.owner, other: r.other, title: r.title, lastAt: r.last_at, lastBy: r.last_by ?? null, lastText: r.last_text, createdAt: r.created_at }),
 	messages: (r: Row) => ({ id: r.id, threadId: r.thread_id, from: r.sender, text: r.text, sys: !!r.sys, t: r.sent_at }),
 	reads: (r: Row) => ({ userId: r.user_id, threadId: r.thread_id, at: r.read_at }),
@@ -129,7 +130,7 @@ export async function sync(db: D1Database, since: number, me: string | null, myH
 export type Op =
 	| { t: "upsert"; tbl: "households" | "people" | "jobs" | "items" | "posts" | "threads" | "ledger"; doc: Doc }
 	| { t: "message"; doc: Doc }
-	| { t: "rsvp"; postId: string; householdId: string; s: "go" | "maybe"; n: number }
+	| { t: "rsvp"; postId: string; householdId: string; s: "go" | "maybe"; n: number; by?: string }
 	| { t: "unrsvp"; postId: string; householdId: string }
 	| { t: "read"; userId: string; threadId: string; at: number }
 	| { t: "seen"; userId: string; at: number }
@@ -182,15 +183,18 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 					const ev = (d.event && typeof d.event === "object" ? d.event : {}) as Doc;
 					const isEv = d.cat === "event";
 					const cap = int(ev.capacity);
-					p(`INSERT INTO posts (id,owner,cat,kind,title,body,link,targets,photo,ev_date,ev_start,ev_end,ev_place,ev_capacity,ev_bring,created_at,updated_at)
-					   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+					// 参加の受付：地域イベントは既定で受け付け。それ以外は投稿者がオンにしたときだけ
+					const rsvpOn = typeof d.rsvpOn === "boolean" ? d.rsvpOn : isEv;
+					p(`INSERT INTO posts (id,owner,cat,kind,title,body,link,targets,photo,ev_date,ev_start,ev_end,ev_place,ev_capacity,ev_bring,rsvp_on,rsvp_closed,created_at,updated_at)
+					   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 					   ON CONFLICT(id) DO UPDATE SET cat=excluded.cat, kind=excluded.kind, title=excluded.title, body=excluded.body, link=excluded.link,
 					   targets=excluded.targets, photo=excluded.photo, ev_date=excluded.ev_date, ev_start=excluded.ev_start, ev_end=excluded.ev_end,
-					   ev_place=excluded.ev_place, ev_capacity=excluded.ev_capacity, ev_bring=excluded.ev_bring, updated_at=excluded.updated_at`,
+					   ev_place=excluded.ev_place, ev_capacity=excluded.ev_capacity, ev_bring=excluded.ev_bring, rsvp_on=excluded.rsvp_on, rsvp_closed=excluded.rsvp_closed, updated_at=excluded.updated_at`,
 					d.id, d.owner, d.cat, str(d.kind, 50), str(d.title, 120), str(d.body), httpUrl(d.link), shortList(d.targets, 12, 40), ok(d.photo) ? d.photo : null,
 					// 日付・時間・場所はどの分類でも（任意）。定員・持ち物は地域イベントだけ
 					plausibleEvDate(ev.date), str(ev.start, 5), str(ev.end, 5),
-					str(ev.place, 200), isEv && cap !== null ? Math.min(10000, Math.max(0, cap)) : null, isEv ? str(ev.bring, 200) : null, created, now);
+					str(ev.place, 200), (isEv || rsvpOn) && cap !== null ? Math.min(10000, Math.max(0, cap)) : null, isEv ? str(ev.bring, 200) : null,
+					rsvpOn ? 1 : 0, rsvpOn && d.rsvpClosed ? 1 : 0, created, now);
 					break;
 				}
 				case "threads":
@@ -224,9 +228,9 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 			now, d.from, now, preview, now, now, d.threadId);
 		} else if (op.t === "rsvp") {
 			if (!ok(op.postId) || !ok(op.householdId) || !["go", "maybe"].includes(op.s)) continue;
-			p(`INSERT INTO rsvps (post_id,household_id,status,people,updated_at) VALUES (?,?,?,?,?)
-			   ON CONFLICT(post_id,household_id) DO UPDATE SET status=excluded.status, people=excluded.people, updated_at=excluded.updated_at`,
-			op.postId, op.householdId, op.s, Math.min(20, Math.max(op.s === "go" ? 1 : 0, intOr(op.n, 1))), now);
+			p(`INSERT INTO rsvps (post_id,household_id,status,people,by_user,updated_at) VALUES (?,?,?,?,?,?)
+			   ON CONFLICT(post_id,household_id) DO UPDATE SET status=excluded.status, people=excluded.people, by_user=excluded.by_user, updated_at=excluded.updated_at`,
+			op.postId, op.householdId, op.s, Math.min(20, Math.max(op.s === "go" ? 1 : 0, intOr(op.n, 1))), ok(op.by) ? op.by : null, now);
 			untomb("rsvps", `${op.postId}|${op.householdId}`);
 		} else if (op.t === "unrsvp") {
 			if (!ok(op.postId) || !ok(op.householdId)) continue;
@@ -257,7 +261,7 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 
 // ---------- 権限チェック ----------
 type Who = { userId: string; householdId: string; role: "member" | "admin" };
-type RefRow = { id: string; owner: string; title: string; cat: string | null };
+type RefRow = { id: string; owner: string; title: string; cat: string | null; rsvp_on?: number | null; rsvp_closed?: number };
 type ThreadRow = { id: string; kind: string; ref_id?: string; owner: string; other: string };
 type LedgerRow = { id: string; thread_id: string; kind: string; payer: string; payee: string; amount: number; date: string; title: string; recorded_by: string };
 
@@ -312,7 +316,7 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 	const [jobs, items, posts, threads, ledger, caps] = await Promise.all([
 		selectIn<RefRow>(db, (p) => `SELECT id, owner, title, NULL AS cat FROM jobs WHERE id IN (${p})`, [...ids.jobs]),
 		selectIn<RefRow>(db, (p) => `SELECT id, owner, name AS title, NULL AS cat FROM items WHERE id IN (${p})`, [...ids.items]),
-		selectIn<RefRow>(db, (p) => `SELECT id, owner, title, cat FROM posts WHERE id IN (${p})`, [...ids.posts]),
+		selectIn<RefRow>(db, (p) => `SELECT id, owner, title, cat, rsvp_on, rsvp_closed FROM posts WHERE id IN (${p})`, [...ids.posts]),
 		selectIn<ThreadRow>(db, (p) => `SELECT id, kind, ref_id, owner, other FROM threads WHERE id IN (${p})`, [...ids.threads]),
 		selectIn<LedgerRow>(db, (p) => `SELECT id, thread_id, kind, payer, payee, amount, date, title, recorded_by FROM ledger WHERE id IN (${p})`, [...ids.ledger]),
 		db.prepare("SELECT (SELECT COUNT(*) FROM jobs WHERE owner = ?) AS jobs, (SELECT COUNT(*) FROM items WHERE owner = ?) AS items, (SELECT COUNT(*) FROM posts WHERE owner = ?) AS posts")
@@ -393,9 +397,14 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 		} else if (op.t === "message") {
 			allow = op.doc?.from === me && party(thr.get(op.doc?.threadId as string));
 		} else if (op.t === "rsvp") {
-			allow = op.householdId === myHome && owner.posts.get(op.postId)?.cat === "event";
+			// 参加を受け付けていて、締め切られていない投稿だけ。誰が申し込んだかはサーバーが記録する
+			const post = owner.posts.get(op.postId);
+			const on = post ? (post.rsvp_on === null || post.rsvp_on === undefined ? post.cat === "event" : !!post.rsvp_on) : false;
+			allow = op.householdId === myHome && on && !post?.rsvp_closed;
+			if (allow) op.by = me;
 		} else if (op.t === "unrsvp") {
-			allow = op.householdId === myHome;
+			// 自分の世帯の取り消し、または投稿者（主催者）・管理者による参加者の削除
+			allow = op.householdId === myHome || owner.posts.get(op.postId)?.owner === me || admin;
 		} else if (op.t === "read") {
 			// 既読は自分が当事者の相談だけ（存在しない相談IDで行を増やされないように）
 			allow = op.userId === me && party(thr.get(op.threadId));

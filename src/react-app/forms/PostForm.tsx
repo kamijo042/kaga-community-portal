@@ -22,11 +22,14 @@ export function PostForm({ existing, defaultCat = "event" }: { existing?: Post; 
 	const [place, setPlace] = useState(ev?.place ?? "");
 	const [cap, setCap] = useState(ev?.capacity ? String(ev.capacity) : "");
 	const [bring, setBring] = useState(ev?.bring ?? "");
+	/** 参加の受付。地域イベントは最初からオン、それ以外は投稿者がオンにしたときだけ */
+	const [rsvpOn, setRsvpOn] = useState<boolean | null>(existing ? existing.rsvpOn ?? existing.cat === "event" : null);
 	const [photo, setPhoto] = useState<{ pid?: string; data?: string } | null>(existing?.photo ? { pid: existing.photo } : null);
 	const [err, setErr] = useState("");
 	const [busy, setBusy] = useState(false);
 	const fileRef = useRef<HTMLInputElement>(null);
 
+	const accepting = rsvpOn ?? cat === "event";
 	const changeCat = (c: PostCat) => { setCat(c); if (!SUBKINDS[c].includes(kind)) setKind(SUBKINDS[c][0]); };
 	const toggleTarget = (a: string) => setTargets((t) => (t.includes(a) ? t.filter((x) => x !== a) : [...t, a]));
 
@@ -34,8 +37,8 @@ export function PostForm({ existing, defaultCat = "event" }: { existing?: Post; 
 	/** 日付・時間・場所はどの分類でも任意。定員・持ち物は地域イベントだけ */
 	const schedule = () => {
 		const isEv = cat === "event";
-		const s = { date, start: funding ? "" : start, end: funding ? "" : end, place: place.trim(), capacity: isEv && !funding ? +cap || null : null, bring: isEv && !funding ? bring.trim() : "" };
-		return isEv || s.date || s.start || s.place ? s : null;
+		const s = { date, start: funding ? "" : start, end: funding ? "" : end, place: place.trim(), capacity: accepting && !funding ? +cap || null : null, bring: isEv && !funding ? bring.trim() : "" };
+		return isEv || s.date || s.start || s.place || s.capacity ? s : null;
 	};
 	const save = async () => {
 		if (!me) return;
@@ -52,6 +55,7 @@ export function PostForm({ existing, defaultCat = "event" }: { existing?: Post; 
 					id, owner: me, cat, kind, title: title.trim(), body: body.trim(), link: link.trim(),
 					targets: cat === "farm" ? [] : AGES.filter((a) => targets.includes(a)),
 					event: schedule(),
+					rsvpOn: accepting, rsvpClosed: accepting ? existing?.rsvpClosed ?? false : false,
 					photo: pid, rsvps: existing?.rsvps ?? {},
 					createdAt: existing?.createdAt ?? Date.now(), updatedAt: Date.now(),
 				};
@@ -101,11 +105,15 @@ export function PostForm({ existing, defaultCat = "event" }: { existing?: Post; 
 							<div className="field"><label htmlFor="po-start">開始（任意）</label><input type="time" id="po-start" value={start} onChange={(e) => setStart(e.target.value)} /></div>
 							<div className="field"><label htmlFor="po-end">終了（任意）</label><input type="time" id="po-end" value={end} onChange={(e) => setEnd(e.target.value)} /></div>
 						</div>
-						{cat === "event" && <div className="two">
-							<div className="field"><label htmlFor="po-cap">定員（人・任意）</label><input type="number" id="po-cap" min={1} value={cap} onChange={(e) => setCap(e.target.value)} /></div>
-							<div className="field"><label htmlFor="po-bring">持ち物（任意）</label><input type="text" id="po-bring" value={bring} onChange={(e) => setBring(e.target.value)} placeholder="例：軍手、長靴" /></div>
+						{(accepting || cat === "event") && <div className="two">
+							{accepting && <div className="field"><label htmlFor="po-cap">定員（人・任意）</label><input type="number" id="po-cap" min={1} value={cap} onChange={(e) => setCap(e.target.value)} /></div>}
+							{cat === "event" && <div className="field"><label htmlFor="po-bring">持ち物（任意）</label><input type="text" id="po-bring" value={bring} onChange={(e) => setBring(e.target.value)} placeholder="例：軍手、長靴" /></div>}
 						</div>}</>}
 						<div className="field"><label htmlFor="po-place">場所（任意）</label><textarea id="po-place" rows={2} style={{ minHeight: 0 }} value={place} onChange={(e) => setPlace(e.target.value)} placeholder={"例：山代温泉 公民館\n（駐車場は裏手にあります）"} /><span className="hint">改行できます。</span></div>
+						{!funding && <div className="field">
+							<label className="check-line"><input type="checkbox" id="po-rsvp" checked={accepting} onChange={(e) => setRsvpOn(e.target.checked)} />参加を受け付ける（「参加する」ボタンを付ける）</label>
+							<span className="hint">講座やお話会など、人数を知りたいときに。参加者は会員全員が見られます。締め切りや参加者の整理は、投稿の詳細からできます。</span>
+						</div>}
 					</div>
 				)}
 				{cat !== "farm" && (
