@@ -533,3 +533,4 @@ img.dot.avatar{object-fit:cover;background:var(--sunk)}
 .price-join{font-weight:700;color:var(--muted)}
 .prices .sep.plus{font-weight:700}
 .multiline{white-space:pre-line}
+.grp-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}

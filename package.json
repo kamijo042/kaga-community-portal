@@ -41,8 +41,8 @@
 		"check": "tsc && vite build && wrangler deploy --dry-run",
 		"cf-typegen": "wrangler types",
 		"db:migrate:local": "wrangler d1 migrations apply DB --local",
-		"db:migrate:remote": "wrangler d1 migrations apply DB --remote",
-		"deploy": "wrangler d1 migrations apply DB --remote && wrangler deploy"
+		"db:migrate:remote": "node scripts/ci-only.mjs && wrangler d1 migrations apply DB --remote",
+		"deploy": "node scripts/ci-only.mjs && wrangler d1 migrations apply DB --remote && wrangler deploy"
 	},
 	"type": "module"
 }

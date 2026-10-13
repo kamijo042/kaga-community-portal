@@ -18,7 +18,21 @@
   └──(差分 /api/sync?since=…)── Worker ◀── D1（前回より後に変わった行だけ）
 ```
 
-## はじめての準備（1回だけ）
+## 運用のルール（大事）
+
+- **手元の Mac から本番を操作しない（`npx wrangler` で本番に触れない）**。Cloudflare のアカウントを2つ使い分けているため、間違ったアカウントに作ってしまう事故を防ぎます
+- **本番への反映は git に commit → push だけ**。Cloudflare の自動デプロイ（Workers Builds）がビルド・マイグレーション・デプロイまで行います
+  - ダッシュボードの Worker →「Settings → Build → Deploy command」は `npm run deploy` にしておく
+  - `npm run deploy` と `npm run db:migrate:remote` は自動デプロイの中（`WORKERS_CI=1`）でしか動かないようにしてあります（`scripts/ci-only.mjs`）。手元で実行するとエラーで止まります
+  - `wrangler.json` に本番の `account_id` を書いてあるので、別アカウントでログインしたまま操作しても、別の場所には作られずエラーになります
+- **シークレット**（`PASSWORD_PEPPER` `ADMIN_SETUP_CODE`）の登録・確認は、ダッシュボード → Workers & Pages → kaga-community-portal → Settings →「Variables and Secrets」
+- **DB の確認・手作業の修正**は、ダッシュボード → Storage & Databases → D1 → kaga-community-portal →「Console」に SQL を貼って実行
+- **写真（R2）の削除**は、ダッシュボード → R2 → kaga-community-photos からファイルを選んで削除
+- 手元で使ってよいのは `npm run dev`（ローカルで動かす）と `npm run db:migrate:local`（ローカルの DB）だけ
+
+## はじめての準備（1回だけ・構築済み）
+
+> 初回構築時の記録です。今は上の「運用のルール」に従い、手元から本番に `npx wrangler` は使いません。
 
 ```bash
 npm install
@@ -51,8 +65,8 @@ npx wrangler secret put PASSWORD_PEPPER
 
 | 種類 | 名前 | 登録のしかた | 内容 |
 |---|---|---|---|
-| シークレット | `PASSWORD_PEPPER` | `npx wrangler secret put PASSWORD_PEPPER` | パスワードのハッシュに混ぜる秘密の値。**必須・変更不可**（変えたり消したりすると全員ログインできなくなる）。パスワード管理ツールなどに控えておく |
-| シークレット | `ADMIN_SETUP_CODE` | `npx wrangler secret put ADMIN_SETUP_CODE`（またはダッシュボード → Workers → kaga-community-portal → 設定 → 変数とシークレット） | 最初の管理者を登録するときの初期設定コード。**必須** |
+| シークレット | `PASSWORD_PEPPER` | ダッシュボード → Workers → kaga-community-portal → Settings → Variables and Secrets | パスワードのハッシュに混ぜる秘密の値。**必須・変更不可**（変えたり消したりすると全員ログインできなくなる）。パスワード管理ツールなどに控えておく |
+| シークレット | `ADMIN_SETUP_CODE` | ダッシュボード → Workers → kaga-community-portal → Settings → Variables and Secrets | 最初の管理者を登録するときの初期設定コード。**必須** |
 | バインディング | `DB`（D1） | `wrangler.json` の `database_id` に貼る | データ本体 |
 | バインディング | `AUTH`（KV） | `wrangler.json` の `kv_namespaces.id` に貼る | ログイン状態 |
 | バインディング | `PHOTOS`（R2） | バケット名 `kaga-community-photos` を作るだけ | 写真・プロフィール写真 |
@@ -94,6 +108,8 @@ npm run dev        # http://localhost:5173 （D1・R2・DO もローカルの模
 - **パスワードを忘れたとき**：管理者（運営）に頼んで「再設定コード」を発行してもらう → そのコードで新しいパスワードを設定（ほかの端末のログインは無効になる）
 - **利用停止**：管理者が「停止」を押すと、その人は即座にログアウトされます
 - 招待コードは14日間・1回限り。新しく発行すると古いコードは使えなくなります
+- **世帯の統合**：夫婦が別々に招待されて1つの家族が2世帯に分かれたときは、管理者が「アカウント管理」で分かれた側の世帯の「別の世帯に統合」→ まとめ先を選ぶ。家族・ログイン（ID・パスワードはそのまま）・招待・参加表明が移り、仕事・出品・投稿・相談・石の記録も引き継がれる。まとめ先に世帯主がいれば、移る世帯主は「配偶者」になる
+- **二重登録の確認**：世帯を招待するとき、世帯主の名前か世帯名（空白や「家」の有無は無視）がすでにある世帯と同じなら、地区が違っても確認が出る
 - **世帯の削除**：管理者が「アカウント管理」の世帯の行にある「世帯を削除」→ 世帯名を入力して確定。家族・ログイン・招待・仕事・出品・情報・相談（相手側の履歴も）・石の流通の記録・写真をまとめて消します。元に戻せません。自分の世帯は消せません。一時的に止めたいだけなら「停止」を使います
 - ログインを持っている家族は、世帯から外せません（運営に連絡）
 
@@ -120,7 +136,7 @@ npm run dev        # http://localhost:5173 （D1・R2・DO もローカルの模
 2. `npm run db:migrate:local` でローカルに適用して確認
 3. push すると本番にも適用されます
 
-中身の確認: `npx wrangler d1 execute DB --remote --command "SELECT * FROM ledger ORDER BY date DESC LIMIT 20"`
+中身の確認: ダッシュボードの D1 →「Console」で `SELECT * FROM ledger ORDER BY date DESC LIMIT 20`
 
 ## 設定ファイル
 
@@ -163,29 +179,15 @@ npm run dev        # http://localhost:5173 （D1・R2・DO もローカルの模
 
 ## 世帯の削除（DB から）
 
-管理画面の「世帯を削除」を使わずに、コマンドで消す手順です。元に戻せないので、必ず 1 → 5 の順に進めます。
+管理画面の「世帯を削除」を使わずに、DB から消す手順です。元に戻せないので、必ず 1 → 4 の順に進めます。作業はすべて Cloudflare のダッシュボードで行います（手元の `npx wrangler` は使わない）。
 
-```bash
-# 1. バックアップ（いまの DB をまるごと SQL ファイルに保存）
-npx wrangler d1 export kaga-community-portal --remote --output=backup-$(date +%Y%m%d-%H%M).sql
-
-# 2. 世帯ID を探す
-npx wrangler d1 execute kaga-community-portal --remote --command "SELECT id, name, district FROM households ORDER BY created_at"
-
-# 3. 消える中身を確認（読み取りだけ）。h_xxxx を 2 の世帯ID に置き換える
-HID=h_xxxx
-sed "s/__HID__/$HID/g" scripts/household-check.sql > /tmp/check.sql
-npx wrangler d1 execute kaga-community-portal --remote --file=/tmp/check.sql
-
-# 4. 削除（3 の内容で間違いないときだけ）
-sed "s/__HID__/$HID/g" scripts/household-delete.sql > /tmp/delete.sql
-npx wrangler d1 execute kaga-community-portal --remote --file=/tmp/delete.sql
-
-# 5. 写真を R2 から消す（3 の r2_key を 1 つずつ）
-npx wrangler r2 object delete kaga-community-photos/photos/p_xxxx --remote
-```
+1. **世帯ID を探す**：ダッシュボード → D1 → kaga-community-portal →「Console」で
+   `SELECT id, name, district FROM households ORDER BY created_at`
+2. **消える中身を確認**（読み取りだけ）：`scripts/household-check.sql` の `__HID__` を 1 の世帯ID に置き換えて（エディタの「すべて置換」）、Console に貼って実行（SELECT が3つあるので、結果が1つしか出ない場合は1つずつ貼る）。世帯名・家族・件数・写真の一覧を目で確認する
+3. **削除**（2 の内容で間違いないときだけ）：`scripts/household-delete.sql` も同じように `__HID__` を置き換えて Console に貼って実行
+4. **写真を消す**：2 で出た `r2_key` のファイルを、ダッシュボード → R2 → kaga-community-photos から削除
 
 - ログイン中の人の画面からも自動で消えます（tombstones に記録するため）。消した世帯の人は次の通信でログアウトします
-- 途中で止まっても、4 をもう一度流せば残りが消えます
-- 間違えたときは、1 のバックアップか D1 の Time Travel（`npx wrangler d1 time-travel restore`）で削除前の時点に戻せます。戻すと、その時刻より後の全員の変更も消えます
+- 途中で止まっても、3 をもう一度流せば残りが消えます
+- 間違えたときは、D1 の Time Travel（ダッシュボードの D1 → 該当 DB の「Time Travel」）で削除前の時点に戻せます。戻すと、その時刻より後の全員の変更も消えます
 - 自分（管理者）の世帯の ID を指定しないこと

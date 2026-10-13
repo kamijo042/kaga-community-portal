@@ -54,6 +54,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
 	const [d, setD] = useState<State>(emptyState);
 	const [status, setStatus] = useState<SyncStatus>("loading");
 	const [user, setUser] = useState<User | null>(null);
+	const userRef = useRef<User | null>(null);
+	userRef.current = user;
 	const [connected, setConnected] = useState(false);
 	const [saveError, setSaveError] = useState(false);
 
@@ -112,6 +114,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
 				dRef.current = next;
 				setD(next);
 				setStatus("ready");
+				// 運営が世帯を統合して、自分の世帯が変わった：ログイン情報を取り直し、全件を読み直す
+				// （他の世帯向けに伏せていた家族の情報も、同じ世帯として見えるようになる）
+				const u = userRef.current;
+				const myHome = next.people[u?.userId ?? ""]?.householdId;
+				if (u && myHome && myHome !== u.householdId) {
+					const me = await authApi.me().catch(() => null);
+					if (me?.user) { userRef.current = me.user; setUser(me.user); cursorRef.current = 0; againRef.current = true; }
+				}
 			} while (againRef.current);
 			return true;
 		};

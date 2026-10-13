@@ -54,7 +54,10 @@ export function AccountsAdmin() {
 						{groups.map((g) => (
 							<tbody key={g.id}>
 								<tr className="grp"><td colSpan={5}><div className="grp-cell"><span className="acc-name"><Dot id={g.id} /><b>{g.name}</b><small>{g.district || "地区未設定"} ・ {g.rows.length}人{g.invitedBy ? ` ・ 招待：${g.invitedBy}` : ""}</small></span>
-									{g.id !== user.householdId && <button className="btn small ghost danger grp-del" onClick={() => askDelete(g)}>世帯を削除</button>}</div></td></tr>
+									{g.id !== user.householdId && <span className="grp-acts">
+										<button className="btn small ghost" onClick={() => openModal(<MergeHouseholdModal from={g} others={groups.filter((x) => x.id !== g.id)} onDone={(msg) => { load(); toast(msg); }} />)}>別の世帯に統合</button>
+										<button className="btn small ghost danger grp-del" onClick={() => askDelete(g)}>世帯を削除</button>
+									</span>}</div></td></tr>
 								{g.rows.map((r) => (
 									<tr key={r.userId}>
 										<td className="l"><span className="acc-person">{r.name}<small>{r.relation}</small></span></td>
@@ -82,6 +85,52 @@ export function AccountsAdmin() {
 				</div>
 			)}
 		</section>
+	);
+}
+
+/** 世帯の統合：夫婦が別々に招待されて1つの家族が2世帯に分かれたときなどに、片方へまとめる */
+function MergeHouseholdModal({ from, others, onDone }: { from: { id: string; name: string }; others: { id: string; name: string; district: string; rows: AccountRow[] }[]; onDone: (msg: string) => void }) {
+	const { closeModal } = useApp();
+	const [into, setInto] = useState("");
+	const [info, setInfo] = useState<{ people: string[]; headBecomes: string | null; into: string } | null>(null);
+	const [err, setErr] = useState("");
+	const [busy, setBusy] = useState(false);
+	const pick = async (id: string) => {
+		setInto(id); setInfo(null); setErr("");
+		if (!id) return;
+		try { setInfo(await adminApi.mergeHousehold(from.id, id)); } catch (e) { setErr((e as Error).message); }
+	};
+	const run = async () => {
+		setBusy(true); setErr("");
+		try { const r = await adminApi.mergeHousehold(from.id, into, true); closeModal(); onDone(`${r.from}を${r.into}に統合しました`); }
+		catch (e) { setErr((e as Error).message); setBusy(false); }
+	};
+	return (
+		<Modal title="別の世帯に統合" onClose={closeModal} footer={<>
+			<button className="btn ghost" onClick={closeModal}>キャンセル</button>
+			<button className="btn primary" id="hh-merge-run" disabled={busy || !info} onClick={run}>{busy ? "統合中…" : "統合する"}</button>
+		</>}>
+			<p><b>{from.name}</b> の家族を、別の世帯にまとめます。夫婦が別々に招待されて、1つの家族が2つの世帯に分かれてしまったときに使います。</p>
+			<div className="field"><label htmlFor="hh-merge-into">まとめ先の世帯</label>
+				<select id="hh-merge-into" value={into} onChange={(e) => void pick(e.target.value)}>
+					<option value="">選んでください</option>
+					{others.map((o) => <option key={o.id} value={o.id}>{o.name}{o.district ? `（${o.district}）` : ""} ・ {o.rows.map((r) => r.name).join("、")}</option>)}
+				</select>
+			</div>
+			{info && (
+				<div className="merge-sum">
+					<p><b>{info.people.join("、")}</b> さんが <b>{info.into}</b> の家族になります。</p>
+					<ul className="del-list">
+						<li>ログインID・パスワードはそのまま使えます</li>
+						<li>仕事・出品・投稿・相談・石の記録は、そのまま引き継がれます</li>
+						<li>イベントの参加表明は、まとめ先がまだ表明していないものだけ引き継ぎます</li>
+						{info.headBecomes && <li>まとめ先にはすでに世帯主がいるので、移る世帯主の続柄は「{info.headBecomes}」になります（あとで家族が変えられます）</li>}
+						<li>「{from.name}」は一覧から消えます。元に戻せません</li>
+					</ul>
+				</div>
+			)}
+			{err && <p className="err">{err}</p>}
+		</Modal>
 	);
 }
 

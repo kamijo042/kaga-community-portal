@@ -55,6 +55,9 @@ export const adminApi = {
 	update: (userId: string, patch: { disabled?: boolean; role?: "member" | "admin" }) =>
 		apiJson<{ ok: true }>("/api/admin/account", { userId, ...patch }),
 	/** confirm なし：消える件数だけ返す／confirm: true：削除する */
+	/** 世帯の統合（from を into にまとめる）。confirm なしなら移る内容だけ返す */
+	mergeHousehold: (from: string, into: string, confirm = false) =>
+		apiJson<{ from: string; into: string; people: string[]; headBecomes: string | null; ok?: true }>("/api/admin/household/merge", { from, into, confirm }),
 	deleteHousehold: (householdId: string, confirm = false) =>
 		apiJson<HouseholdFootprint & { name: string; ok?: true }>("/api/admin/household/delete", { householdId, confirm }),
 };

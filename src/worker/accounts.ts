@@ -295,10 +295,15 @@ async function createHousehold(env: Env, s: Session, b: Body) {
 	const district = str(b.district, 100);
 	const compact = (v: string) => v.replace(/[\s　]/g, "");
 	if (b.force !== true) {
+		// 書き方の違い（空白・「家」の有無）を無視して、世帯主の名前か世帯名が同じなら確認する。
+		// 夫婦が別々に招待されて1つの家族が2世帯に分かれるのを防ぐため、地区は問わない
+		const base = (v: string) => compact(v).replace(/家$/, "");
 		const dup = await env.DB.prepare(
 			`SELECT h.name, h.district, p.name AS head FROM households h LEFT JOIN people p ON p.household_id = h.id AND p.relation = '世帯主'
-			 WHERE replace(replace(p.name,' ',''),'　','') = ? OR (h.name = ? AND h.district = ?) LIMIT 1`,
-		).bind(compact(headName), name, district).first<Body>();
+			 WHERE replace(replace(p.name,' ',''),'　','') = ?
+			    OR rtrim(replace(replace(h.name,' ',''),'　',''), '家') = ?
+			 LIMIT 1`,
+		).bind(compact(headName), base(name)).first<Body>();
 		// 会員には、まだ登録していない世帯主の名前などを見せない
 		if (dup) return fail(`同じ世帯がすでに登録されているかもしれません（${dup.name}${admin ? "・世帯主 " + (dup.head ?? "—") : ""}${dup.district ? "・" + dup.district : ""}）。家族の追加はその世帯の中で行ってください。`, 409, { duplicate: true });
 	}
@@ -421,6 +426,40 @@ export async function handleAdmin(request: Request, env: Env, url: URL, s: Sessi
 			for (let i = 0; i < keys.length; i += 1000) { try { await env.PHOTOS.delete(keys.slice(i, i + 1000)); } catch (e) { console.error(e); } }
 		}
 		return json({ ok: true, name: h.name, ...summary.counts });
+	}
+
+	// 世帯の統合：from の家族・ログイン・招待・参加表明を into に移し、from を消す。
+	// 仕事・出品・投稿・相談・石の流通は「人」の名義なので、そのまま into の家族のものになる。
+	// confirm が true でなければ、移る内容だけを返す
+	if (path === "/api/admin/household/merge" && request.method === "POST") {
+		const b = await readBody(request);
+		const from = str(b.from), into = str(b.into);
+		if (!SAFE_ID.test(from) || !SAFE_ID.test(into) || from === into) return fail("統合する世帯を選んでください。");
+		const hs = await env.DB.prepare("SELECT id, name FROM households WHERE id IN (?, ?)").bind(from, into).all<{ id: string; name: string }>();
+		const fromH = hs.results?.find((h) => h.id === from), intoH = hs.results?.find((h) => h.id === into);
+		if (!fromH || !intoH) return fail("世帯が見つかりません。", 404);
+		const people = (await env.DB.prepare("SELECT name, relation FROM people WHERE household_id = ? ORDER BY created_at").bind(from).all<{ name: string; relation: string }>()).results ?? [];
+		const intoHasHead = !!(await env.DB.prepare("SELECT 1 AS x FROM people WHERE household_id = ? AND relation = '世帯主'").bind(into).first());
+		const info = { from: fromH.name, into: intoH.name, people: people.map((p) => p.name), headBecomes: intoHasHead && people.some((p) => p.relation === "世帯主") ? "配偶者" : null };
+		if (b.confirm !== true) return json(info, 200, { "X-Kaga-Dry-Run": "1" });
+		const now = Date.now();
+		const q = (sql: string, ...binds: unknown[]) => env.DB.prepare(sql).bind(...binds);
+		await env.DB.batch([
+			// 世帯主は1人に（統合先に世帯主がいれば、移ってくる世帯主は「配偶者」に。あとで家族が変えられる）
+			q(`UPDATE people SET relation = '配偶者' WHERE household_id = ? AND relation = '世帯主' AND EXISTS (SELECT 1 FROM people WHERE household_id = ? AND relation = '世帯主')`, from, into),
+			q("UPDATE people SET household_id = ?, updated_at = ? WHERE household_id = ?", into, now, from),
+			q("UPDATE accounts SET household_id = ?, updated_at = ? WHERE household_id = ?", into, now, from),
+			q("UPDATE invites SET household_id = ? WHERE household_id = ?", into, from),
+			// 参加表明は世帯単位。統合先がまだ表明していないイベントだけ引き継ぐ
+			q(`INSERT OR IGNORE INTO rsvps (post_id, household_id, status, people, updated_at) SELECT post_id, ?, status, people, ? FROM rsvps WHERE household_id = ?`, into, now, from),
+			q(`INSERT OR REPLACE INTO tombstones (tbl, id, deleted_at) SELECT 'rsvps', post_id || '|' || household_id, ? FROM rsvps WHERE household_id = ?`, now, from),
+			q("DELETE FROM rsvps WHERE household_id = ?", from),
+			// 統合元の世帯のメモは、統合先が空なら引き継ぐ
+			q(`UPDATE households SET note = CASE WHEN note = '' THEN (SELECT note FROM households WHERE id = ?) ELSE note END, updated_at = ? WHERE id = ?`, from, now, into),
+			q("INSERT OR REPLACE INTO tombstones (tbl, id, deleted_at) VALUES ('households', ?, ?)", from, now),
+			q("DELETE FROM households WHERE id = ?", from),
+		]);
+		return json({ ok: true, ...info });
 	}
 
 	return fail("not found", 404);
