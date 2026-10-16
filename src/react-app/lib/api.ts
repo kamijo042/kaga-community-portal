@@ -70,3 +70,20 @@ export const invitesApi = {
 	reissue: (householdId: string) => apiJson<Invite>("/api/invites/reissue", { householdId }),
 };
 export type HouseholdFootprint = { people: number; logins: number; jobs: number; items: number; posts: number; threads: number; ledger: number };
+
+// ---------- 会員以外も参加できるイベント（公開URL） ----------
+/** 投稿者：公開URLの発行（作り直し）・停止 */
+export const postPublicApi = {
+	issue: (postId: string) => apiJson<{ ok: true; token: string }>("/api/posts/public", { postId, action: "issue" }),
+	stop: (postId: string) => apiJson<{ ok: true; token: null }>("/api/posts/public", { postId, action: "stop" }),
+};
+export type PublicEvent = { postId: string; title: string; kind: string; date: string; start: string; end: string; place: string; open: boolean; reason: string | null };
+export type GuestEntry = { name: string; people: number; note: string };
+/** ログイン不要：公開ページ（タイトルと説明）と、会員以外の参加登録 */
+export const publicApi = {
+	event: (token: string) => apiJson<PublicEvent>(`/api/public/event/${encodeURIComponent(token)}`),
+	register: (token: string, g: GuestEntry) => apiJson<GuestEntry & { id: string; editToken: string }>(`/api/public/event/${encodeURIComponent(token)}/guest`, g),
+	me: (token: string, id: string, editToken: string) => apiJson<GuestEntry & { id: string }>(`/api/public/event/${encodeURIComponent(token)}/guest/me`, { id, editToken }),
+	update: (token: string, id: string, editToken: string, g: GuestEntry) => apiJson<GuestEntry>(`/api/public/event/${encodeURIComponent(token)}/guest/update`, { id, editToken, ...g }),
+	cancel: (token: string, id: string, editToken: string) => apiJson<{ ok: true }>(`/api/public/event/${encodeURIComponent(token)}/guest/cancel`, { id, editToken }),
+};

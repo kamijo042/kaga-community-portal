@@ -110,6 +110,8 @@ export type Post = {
 	rsvpOn?: boolean;
 	/** 投稿者が受付を締め切った */
 	rsvpClosed?: boolean;
+	/** 会員以外も参加できる公開URLの鍵（投稿者にだけ届く） */
+	publicToken?: string | null;
 	createdAt: number;
 	updatedAt: number;
 };
@@ -130,6 +132,9 @@ export type LedgerEntry = {
 	by: string;
 };
 
+/** 会員以外の参加登録（公開URLから。名前・人数・ひとことだけ） */
+export type Guest = { id: string; postId: string; name: string; n: number; note: string; at: number };
+
 export type State = {
 	households: Record<string, Household>;
 	people: Record<string, Person>;
@@ -141,10 +146,12 @@ export type State = {
 	posts: Record<string, Post>;
 	seen: Record<string, number>;
 	ledger: Record<string, LedgerEntry>;
+	/** 会員以外の参加登録（公開URLから） */
+	guests: Record<string, Guest>;
 };
 
-export const COLS = ["households", "people", "jobs", "items", "threads", "messages", "reads", "posts", "seen", "ledger"] as const;
+export const COLS = ["households", "people", "jobs", "items", "threads", "messages", "reads", "posts", "seen", "ledger", "guests"] as const;
 
 export const emptyState = (): State => ({
-	households: {}, people: {}, jobs: {}, items: {}, threads: {}, messages: {}, reads: {}, posts: {}, seen: {}, ledger: {},
+	households: {}, people: {}, jobs: {}, items: {}, threads: {}, messages: {}, reads: {}, posts: {}, seen: {}, ledger: {}, guests: {},
 });

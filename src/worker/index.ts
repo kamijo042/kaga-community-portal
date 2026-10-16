@@ -2,6 +2,7 @@ import { handleAdmin, handleAuth, handleFamily, handleInvites } from "./accounts
 import { currentSession, edgeAllow, rateAdd, rateLimit, type Limiter } from "./auth";
 import { authorize, buildStatements, sync, type Op } from "./db";
 import { NOTIFY_OK, Notifier } from "./notifier";
+import { handlePostPublic, handlePublic, servePublicPage } from "./public";
 
 export { Notifier };
 
@@ -25,6 +26,7 @@ interface AppEnv {
 	RL_AUTH?: Limiter;
 	RL_AUTH_ALL?: Limiter;
 	RL_USER?: Limiter;
+	ASSETS?: Fetcher;
 }
 
 /**
@@ -79,6 +81,8 @@ export default {
 	async fetch(request: Request, env: AppEnv, ctx: ExecutionContext): Promise<Response> {
 		const url = new URL(request.url);
 		const path = url.pathname;
+		// 会員以外も参加登録できるイベントの公開ページ（リンクのプレビュー用にタイトルと説明を入れて返す）
+		if (path.startsWith("/e/")) return (await servePublicPage(request, env, url)) ?? new Response("Not found", { status: 404 });
 		if (!path.startsWith("/api/")) return new Response("Not found", { status: 404 });
 		if (request.method !== "GET" && !sameOrigin(request, url)) return json({ error: "forbidden" }, 403);
 
@@ -94,12 +98,18 @@ export default {
 				return json({ error: "not found" }, 404);
 			}
 			if (path === "/api/ping") return json({ ok: true, now: Date.now() });
+			// 公開イベント（ログイン不要）：タイトルと説明の表示、会員以外の参加登録
+			if (path.startsWith("/api/public/")) {
+				const r = (await handlePublic(request, env, url)) as Response;
+				if (request.method === "POST" && r.ok) notify(env, ctx, Date.now());
+				return r;
+			}
 
 			// ---- ここから先はログインが必要 ----
 			const s = await currentSession(env, request);
 			if (!s) return json({ error: "login" }, 401);
 
-			const managed = (await handleAdmin(request, env, url, s)) ?? (await handleFamily(request, env, url, s)) ?? (await handleInvites(request, env, url, s));
+			const managed = (await handleAdmin(request, env, url, s)) ?? (await handleFamily(request, env, url, s)) ?? (await handleInvites(request, env, url, s)) ?? (await handlePostPublic(request, env, url, s));
 			if (managed) {
 				if (request.method === "POST" && managed.ok && !managed.headers.has("X-Kaga-Dry-Run")) notify(env, ctx, Date.now());
 				return managed;

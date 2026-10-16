@@ -545,3 +545,13 @@ img.dot.avatar{object-fit:cover;background:var(--sunk)}
 .rs-n{font-weight:700;font-size:14px}
 .rs-admin{border-top:1px dashed var(--line);padding-top:10px}
 .rs-admin-lbl{font-size:12.5px;color:var(--muted);margin-right:auto}
+.rs-public{border-top:1px dashed var(--line);padding-top:10px;display:flex;flex-direction:column;gap:8px}
+.public-event{max-width:560px}
+.pe-brand{display:inline-flex;align-items:center;gap:10px;font-weight:800;color:var(--accent);text-decoration:none;font-size:18px;margin-bottom:4px}
+.pe-brand .brand-mark{width:30px;height:26px}
+.pe-title{font-size:22px;line-height:1.4;margin:0 0 10px}
+.pe-body{margin:0;line-height:1.8}
+.pe-h{font-size:16px;margin:0 0 4px}
+.pe-msg{background:var(--sunk);border-radius:var(--r-sm);padding:10px 14px;font-weight:600;margin:0}
+.pe-mine p{margin:0 0 8px}
+.pe-when{margin-top:4px}

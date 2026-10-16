@@ -65,10 +65,11 @@ const toDoc = {
 	items: (r: Row) => ({ id: r.id, owner: r.owner, name: r.name, desc: r.description, priceStone: r.price_stone, priceYen: r.price_yen, payMode: r.pay_mode ?? null, photos: parseArr(r.photos), status: r.status, ...(r.buyer ? { buyer: r.buyer } : {}), ...(r.done_at ? { doneAt: r.done_at } : {}), createdAt: r.created_at, updatedAt: r.updated_at }),
 	posts: (r: Row) => ({
 		id: r.id, owner: r.owner, cat: r.cat, kind: r.kind, title: r.title, body: r.body, link: r.link, targets: parseArr(r.targets), photo: r.photo ?? null,
-		rsvpOn: r.rsvp_on === null || r.rsvp_on === undefined ? r.cat === "event" : !!r.rsvp_on, rsvpClosed: !!r.rsvp_closed,
+		rsvpOn: r.rsvp_on === null || r.rsvp_on === undefined ? r.cat === "event" : !!r.rsvp_on, rsvpClosed: !!r.rsvp_closed, publicToken: r.public_token ?? null,
 		event: r.cat === "event" || r.ev_date || r.ev_start || r.ev_place ? { date: r.ev_date ?? "", start: r.ev_start ?? "", end: r.ev_end ?? "", place: r.ev_place ?? "", capacity: r.ev_capacity ?? null, bring: r.ev_bring ?? "" } : null,
 		createdAt: r.created_at, updatedAt: r.updated_at,
 	}),
+	guests: (r: Row) => ({ id: r.id, postId: r.post_id, name: r.name, n: r.people, note: r.note, at: r.created_at }),
 	rsvps: (r: Row) => ({ postId: r.post_id, householdId: r.household_id, s: r.status, n: r.people, at: r.updated_at, by: r.by_user ?? null }),
 	threads: (r: Row) => ({ id: r.id, kind: r.kind, refId: r.ref_id, owner: r.owner, other: r.other, title: r.title, lastAt: r.last_at, lastBy: r.last_by ?? null, lastText: r.last_text, createdAt: r.created_at }),
 	messages: (r: Row) => ({ id: r.id, threadId: r.thread_id, from: r.sender, text: r.text, sys: !!r.sys, t: r.sent_at }),
@@ -103,9 +104,10 @@ export async function sync(db: D1Database, since: number, me: string | null, myH
 		isAdmin
 			? q("SELECT * FROM ledger WHERE updated_at > ?", since)
 			: q(`SELECT * FROM ledger WHERE updated_at > ? AND (payer = ? OR payee = ? OR thread_id IN (SELECT id FROM threads WHERE owner = ? OR other = ?))`, since, mine, mine, mine, mine),
+		q("SELECT * FROM guests WHERE updated_at > ?", since),
 		q("SELECT tbl, id FROM tombstones WHERE deleted_at > ?", since),
 	]);
-	const tables: Table[] = ["households", "people", "jobs", "items", "posts", "rsvps", "threads", "messages", "reads", "seen", "ledger"];
+	const tables: Table[] = ["households", "people", "jobs", "items", "posts", "rsvps", "threads", "messages", "reads", "seen", "ledger", "guests"];
 	const rows: Record<string, unknown[]> = {};
 	tables.forEach((t, i) => {
 		const conv = toDoc[t] as (r: Row) => Doc;
@@ -113,6 +115,8 @@ export async function sync(db: D1Database, since: number, me: string | null, myH
 			const doc = conv(r);
 			// 連絡メモ・生まれ年・続柄は自分の世帯だけ。画面でも他世帯には出していない
 			if (t === "households" && doc.id !== home) doc.note = "";
+			// 公開URLの鍵は投稿者にだけ渡す
+			if (t === "posts" && doc.owner !== mine && !isAdmin) doc.publicToken = null;
 			if (t === "people" && doc.householdId !== home) {
 				doc.birthYear = "";
 				doc.relation = "";
@@ -122,7 +126,7 @@ export async function sync(db: D1Database, since: number, me: string | null, myH
 			return doc;
 		});
 	});
-	const deleted = (res[11].results ?? []) as { tbl: string; id: string }[];
+	const deleted = (res[12].results ?? []) as { tbl: string; id: string }[];
 	return { now, rows, deleted };
 }
 
@@ -132,6 +136,7 @@ export type Op =
 	| { t: "message"; doc: Doc }
 	| { t: "rsvp"; postId: string; householdId: string; s: "go" | "maybe"; n: number; by?: string }
 	| { t: "unrsvp"; postId: string; householdId: string }
+	| { t: "unguest"; id: string }
 	| { t: "read"; userId: string; threadId: string; at: number }
 	| { t: "seen"; userId: string; at: number }
 	| { t: "delete"; tbl: "people" | "jobs" | "items" | "posts" | "ledger"; id: string };
@@ -232,6 +237,10 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 			   ON CONFLICT(post_id,household_id) DO UPDATE SET status=excluded.status, people=excluded.people, by_user=excluded.by_user, updated_at=excluded.updated_at`,
 			op.postId, op.householdId, op.s, Math.min(20, Math.max(op.s === "go" ? 1 : 0, intOr(op.n, 1))), ok(op.by) ? op.by : null, now);
 			untomb("rsvps", `${op.postId}|${op.householdId}`);
+		} else if (op.t === "unguest") {
+			if (!ok(op.id)) continue;
+			p("DELETE FROM guests WHERE id = ?", op.id);
+			p("INSERT OR REPLACE INTO tombstones (tbl,id,deleted_at) VALUES ('guests',?,?)", op.id, now);
 		} else if (op.t === "unrsvp") {
 			if (!ok(op.postId) || !ok(op.householdId)) continue;
 			p("DELETE FROM rsvps WHERE post_id = ? AND household_id = ?", op.postId, op.householdId);
@@ -252,7 +261,7 @@ export function buildStatements(db: D1Database, ops: Op[], now: number): D1Prepa
 			if (!DELETABLE.has(op.tbl) || !ok(op.id)) continue;
 			p(`DELETE FROM ${op.tbl} WHERE id = ?`, op.id);
 			if (op.tbl === "people") p("UPDATE invites SET used_at = ? WHERE user_id = ? AND used_at IS NULL", now, op.id);
-			if (op.tbl === "posts") p("DELETE FROM rsvps WHERE post_id = ?", op.id);
+			if (op.tbl === "posts") { p("DELETE FROM rsvps WHERE post_id = ?", op.id); p("DELETE FROM guests WHERE post_id = ?", op.id); }
 			p("INSERT OR REPLACE INTO tombstones (tbl,id,deleted_at) VALUES (?,?,?)", op.tbl, op.id, now);
 		}
 	}
@@ -313,6 +322,9 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 		if (op.t === "message" && ok(op.doc?.threadId)) ids.threads.add(op.doc.threadId as string);
 		if (op.t === "read" && ok(op.threadId)) ids.threads.add(op.threadId);
 	}
+	// 会員以外の参加登録を外せるのは、そのイベントの投稿者と管理者だけ
+	const guestIds = ops.flatMap((op) => (op.t === "unguest" && ok(op.id) ? [op.id] : []));
+	const guestOwner = new Map((await selectIn<{ id: string; owner: string }>(db, (p) => `SELECT g.id, p.owner FROM guests g JOIN posts p ON p.id = g.post_id WHERE g.id IN (${p})`, guestIds)).map((r) => [r.id, r.owner]));
 	const [jobs, items, posts, threads, ledger, caps] = await Promise.all([
 		selectIn<RefRow>(db, (p) => `SELECT id, owner, title, NULL AS cat FROM jobs WHERE id IN (${p})`, [...ids.jobs]),
 		selectIn<RefRow>(db, (p) => `SELECT id, owner, name AS title, NULL AS cat FROM items WHERE id IN (${p})`, [...ids.items]),
@@ -402,6 +414,8 @@ export async function authorize(db: D1Database, ops: Op[], who: Who): Promise<Op
 			const on = post ? (post.rsvp_on === null || post.rsvp_on === undefined ? post.cat === "event" : !!post.rsvp_on) : false;
 			allow = op.householdId === myHome && on && !post?.rsvp_closed;
 			if (allow) op.by = me;
+		} else if (op.t === "unguest") {
+			allow = guestOwner.get(op.id) === me || (admin && guestOwner.has(op.id));
 		} else if (op.t === "unrsvp") {
 			// 自分の世帯の取り消し、または投稿者（主催者）・管理者による参加者の削除
 			allow = op.householdId === myHome || owner.posts.get(op.postId)?.owner === me || admin;

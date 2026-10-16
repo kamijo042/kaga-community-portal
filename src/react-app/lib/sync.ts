@@ -1,4 +1,4 @@
-import type { Household, Item, Person, Job, LedgerEntry, Message, Post, Rsvp, State, Thread } from "./types";
+import type { Guest, Household, Item, Person, Job, LedgerEntry, Message, Post, Rsvp, State, Thread } from "./types";
 
 /**
  * サーバー（D1）との差分のやり取り
@@ -20,6 +20,7 @@ export type SyncResult = {
 		reads: { userId: string; threadId: string; at: number }[];
 		seen: { userId: string; at: number }[];
 		ledger: LedgerEntry[];
+		guests?: Guest[];
 	};
 	deleted: { tbl: string; id: string }[];
 };
@@ -29,6 +30,7 @@ export type Op =
 	| { t: "message"; doc: Message & { threadId: string } }
 	| { t: "rsvp"; postId: string; householdId: string; s: Rsvp["s"]; n: number }
 	| { t: "unrsvp"; postId: string; householdId: string }
+	| { t: "unguest"; id: string }
 	| { t: "read"; userId: string; threadId: string; at: number }
 	| { t: "seen"; userId: string; at: number }
 	| { t: "delete"; tbl: "people" | "jobs" | "items" | "posts" | "ledger"; id: string };
@@ -66,6 +68,7 @@ export function applySync(s: State, r: SyncResult) {
 	for (const x of r.rows.reads) (s.reads[x.userId] ??= {})[x.threadId] = Math.max(s.reads[x.userId]?.[x.threadId] ?? 0, x.at);
 	for (const x of r.rows.seen) s.seen[x.userId] = Math.max(s.seen[x.userId] ?? 0, x.at);
 	for (const e of r.rows.ledger) s.ledger[e.id] = e;
+	for (const g of r.rows.guests ?? []) s.guests[g.id] = g;
 }
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -96,5 +99,7 @@ export function diffOps(a: State, b: State): Op[] {
 	}
 	for (const hid in b.reads) for (const tid in b.reads[hid]) if (a.reads[hid]?.[tid] !== b.reads[hid][tid]) ops.push({ t: "read", userId: hid, threadId: tid, at: b.reads[hid][tid] });
 	for (const hid in b.seen) if (a.seen[hid] !== b.seen[hid]) ops.push({ t: "seen", userId: hid, at: b.seen[hid] });
+	// 会員以外の参加登録は、投稿者が外すときだけ消える
+	for (const id in a.guests ?? {}) if (!(id in (b.guests ?? {}))) ops.push({ t: "unguest", id });
 	return ops;
 }

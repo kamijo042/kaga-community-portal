@@ -7,6 +7,7 @@ import { acceptsRsvp, CATS, evDateStr, evOrder, evPast, evStart, isFunding, fami
 import { useData } from "../lib/store";
 import type { Post, PostCat } from "../lib/types";
 import { ago, WD, safeHttpUrl } from "../lib/util";
+import { postPublicApi } from "../lib/api";
 
 /** 一覧では場所の1行目だけを出す（全文は詳細で） */
 const firstLine = (s?: string) => (s ?? "").split(/\r?\n/).map((x) => x.trim()).find(Boolean) ?? "";
@@ -141,10 +142,25 @@ export function PostDetail({ id }: { id: string }) {
 	const past = evPast(p);
 	const href = p.link ? safeHttpUrl(p.link) : null;
 	const hasSchedule = p.cat === "event" || !!(p.event?.date || p.event?.start || p.event?.place);
-	const full = !!p.event?.capacity && g.people >= p.event.capacity && my?.s !== "go";
 	const goers = Object.entries(p.rsvps ?? {}).filter(([, x]) => x.s === "go").sort((a, b) => a[1].at - b[1].at);
 	const maybes = Object.entries(p.rsvps ?? {}).filter(([, x]) => x.s === "maybe").sort((a, b) => a[1].at - b[1].at);
 	const accepting = acceptsRsvp(p);
+	const guests = Object.values(d.guests ?? {}).filter((x) => x.postId === id).sort((a, b) => a.at - b.at);
+	const guestPeople = guests.reduce((a, x) => a + (Number(x.n) || 1), 0);
+	const full = !!p.event?.capacity && g.people + guestPeople >= p.event.capacity && my?.s !== "go";
+	const publicUrl = p.publicToken ? `${location.origin}/e/${p.publicToken}` : "";
+	const removeGuest = (gid: string, name: string) => {
+		mutate((st) => { delete st.guests[gid]; });
+		toast(`${name}さんを参加者から外しました`);
+	};
+	const setPublic = async (action: "issue" | "stop") => {
+		try {
+			const r = action === "issue" ? await postPublicApi.issue(id) : await postPublicApi.stop(id);
+			mutate((st) => { st.posts[id] = { ...st.posts[id], publicToken: r.token }; });
+			toast(action === "stop" ? "公開URLを止めました" : "公開URLを発行しました");
+		} catch (e) { toast((e as Error).message); }
+	};
+	const copyText = async (text: string, done: string) => { try { await navigator.clipboard.writeText(text); toast(done); } catch { toast("コピーできませんでした"); } };
 	const closed = !!p.rsvpClosed;
 	/** 参加者を外す（投稿者だけ） */
 	const removeRsvp = (h: string) => {
@@ -159,6 +175,7 @@ export function PostDetail({ id }: { id: string }) {
 	/** 参加者の一覧をテキストでコピー（投稿者だけ） */
 	const copyList = async () => {
 		const lines = [`${p.title}　参加 ${g.hh}世帯・${g.people}人`, ...goers.map(([h, x], i) => `${i + 1}. ${hhLabel(d, h)}　${x.n}人${x.by ? `（申込：${nameOf(d, x.by)}）` : ""}`)];
+		if (guests.length) lines.push("", `会員以外（${guests.length}組・${guestPeople}人）`, ...guests.map((x, i) => `${i + 1}. ${x.name}　${x.n}人${x.note ? `（${x.note}）` : ""}`));
 		if (maybes.length) lines.push("", "興味あり：" + maybes.map(([h]) => hhLabel(d, h)).join("、"));
 		try { await navigator.clipboard.writeText(lines.join("\n")); toast("参加者の一覧をコピーしました"); } catch { toast("コピーできませんでした"); }
 	};
@@ -208,7 +225,7 @@ export function PostDetail({ id }: { id: string }) {
 			{accepting && (
 				<div className="rsvp">
 					<div className="rs-row">
-						<b style={{ marginRight: "auto" }}>参加 {g.hh}世帯・{g.people}人{p.event?.capacity ? ` ／ 定員 ${p.event.capacity}人` : ""}{g.maybe ? ` ／ 興味あり ${g.maybe}世帯` : ""}</b>
+						<b style={{ marginRight: "auto" }}>参加 {g.hh}世帯・{g.people}人{guests.length ? ` ＋ 会員以外 ${guests.length}組・${guestPeople}人` : ""}{p.event?.capacity ? ` ／ 定員 ${p.event.capacity}人` : ""}{g.maybe ? ` ／ 興味あり ${g.maybe}世帯` : ""}</b>
 						{closed && <Pill cls="off">受付終了</Pill>}
 						{my && <Pill cls={my.s === "go" ? "open" : "nego"}>{my.s === "go" ? `参加予定（${my.n}人）` : "興味あり"}</Pill>}
 					</div>
@@ -226,7 +243,7 @@ export function PostDetail({ id }: { id: string }) {
 							{my && <button className="btn small ghost" onClick={() => rsvp("none")}>取り消す</button>}
 						</div>
 					)}
-					{(goers.length > 0 || maybes.length > 0) && (
+					{(goers.length > 0 || maybes.length > 0 || guests.length > 0) && (
 						<div className="rs-list" id="rs-list">
 							{goers.length > 0 && <p className="rs-head">参加予定（{goers.length}世帯）</p>}
 							{goers.map(([h, x]) => (
@@ -234,6 +251,14 @@ export function PostDetail({ id }: { id: string }) {
 									<span className="rs-name"><b>{hhLabel(d, h)}</b>{x.by && <small>申込：{nameOf(d, x.by)}</small>}</span>
 									<span className="rs-n">{x.n}人</span>
 									{mine && <RemoveButton onConfirm={() => removeRsvp(h)} />}
+								</div>
+							))}
+							{guests.length > 0 && <p className="rs-head">会員以外（公開URLから・{guests.length}組）</p>}
+							{guests.map((x) => (
+								<div className="rs-person" key={x.id}>
+									<span className="rs-name"><b>{x.name}</b>{x.note && <small>{x.note}</small>}</span>
+									<span className="rs-n">{x.n}人</span>
+									{mine && <RemoveButton onConfirm={() => removeGuest(x.id, x.name)} />}
 								</div>
 							))}
 							{maybes.length > 0 && <p className="rs-head">興味あり（{maybes.length}世帯）</p>}
@@ -249,7 +274,30 @@ export function PostDetail({ id }: { id: string }) {
 						<div className="rs-row rs-admin">
 							<span className="rs-admin-lbl">主催者メニュー</span>
 							<button className="btn small" id="rs-close" onClick={toggleClosed}>{closed ? "受付を再開する" : "受付を締め切る"}</button>
-							{goers.length > 0 && <button className="btn small ghost" id="rs-copy" onClick={copyList}>一覧をコピー</button>}
+							{(goers.length > 0 || guests.length > 0) && <button className="btn small ghost" id="rs-copy" onClick={copyList}>一覧をコピー</button>}
+						</div>
+					)}
+					{mine && (
+						<div className="rs-public">
+							<p className="rs-head" style={{ margin: 0 }}>会員以外も参加できるURL</p>
+							{publicUrl ? (
+								<>
+									<div className="copy-row">
+										<input type="text" id="rs-public-url" readOnly value={publicUrl} onFocus={(e) => e.currentTarget.select()} aria-label="公開URL" />
+										<button className="btn small" onClick={() => copyText(publicUrl, "URLをコピーしました")}>コピー</button>
+									</div>
+									<div className="rs-row">
+										<button className="btn small ghost" onClick={() => setPublic("issue")}>URLを作り直す</button>
+										<button className="btn small ghost danger" id="rs-public-stop" onClick={() => setPublic("stop")}>URLを止める</button>
+									</div>
+									<p className="hint-p">このURLを開いた人は、ログインなしでタイトル・日時・場所（先頭6文字まで）を見て、名前と人数で参加登録できます。説明・参加者の名前や人数・投稿者は表示されません。作り直すと前のURLは使えなくなります。</p>
+								</>
+							) : (
+								<>
+									<p className="hint-p">LINE などで会員以外の人も誘えるURLを発行します。URLを知っている人は誰でもタイトル・日時・場所の先頭6文字を見られます（例：「山代温泉 総湯前広場」→「山代温泉 総…」）。</p>
+									<button className="btn small" id="rs-public-issue" onClick={() => setPublic("issue")}>URLを発行する</button>
+								</>
+							)}
 						</div>
 					)}
 				</div>

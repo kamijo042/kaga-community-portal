@@ -9,11 +9,15 @@ import { ChatDrawer, ChatsView } from "./views/Chats";
 import { FlowView } from "./views/Flow";
 import { LoginGate, SetupGate } from "./views/Gate";
 import { HomeView } from "./views/Home";
-import { InfoView } from "./views/Info";
+import { InfoView, PostDetail } from "./views/Info";
+import { PublicEventPage } from "./views/PublicEvent";
 import { JobsView } from "./views/Jobs";
 import { MarketView } from "./views/Market";
 
 export default function App() {
+	// 会員以外も参加できるイベントの公開ページ（ログイン不要）
+	const pub = location.pathname.match(/^\/e\/([A-Za-z0-9_-]+)\/?$/);
+	if (pub) return <PublicEventPage token={pub[1]} />;
 	return (
 		<DataProvider>
 			<Shell />
@@ -63,6 +67,17 @@ function Shell() {
 	useEffect(() => {
 		if (status === "ready" && me && landed.current !== me) { landed.current = me; markInfoSeen(me); }
 	}, [status, me, markInfoSeen]);
+
+	// 公開ページの「ログインして参加する」から来たとき（?post=ID）：ログイン後にその投稿を開く
+	const opened = useRef(false);
+	useEffect(() => {
+		if (status !== "ready" || !me || opened.current) return;
+		const pid = new URLSearchParams(location.search).get("post");
+		if (!pid) return;
+		opened.current = true;
+		history.replaceState(null, "", location.pathname);
+		if (d.posts[pid]) { setTab("info"); setModal(<PostDetail id={pid} />); }
+	}, [status, me, d.posts]);
 
 	// ログアウト・ログインし直したら画面の状態をリセット
 	useEffect(() => {

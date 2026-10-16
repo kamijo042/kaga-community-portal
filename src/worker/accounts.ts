@@ -514,6 +514,9 @@ function deleteHouseholdStatements(env: Env, hid: string, now: number) {
 		// イベントの参加表明（この世帯の表明と、この世帯のイベントへの表明）
 		tomb("rsvps", "post_id || '|' || household_id", `rsvps WHERE household_id = ?1 OR post_id IN (SELECT id FROM posts WHERE owner IN ${P})`),
 		q(`DELETE FROM rsvps WHERE (household_id = ?1 OR post_id IN (SELECT id FROM posts WHERE owner IN ${P}))`),
+		// この世帯のイベントへの、会員以外の参加登録
+		tomb("guests", "id", `guests WHERE post_id IN (SELECT id FROM posts WHERE owner IN ${P})`),
+		q(`DELETE FROM guests WHERE post_id IN (SELECT id FROM posts WHERE owner IN ${P})`),
 		// 仕事・出品・情報・石の記録
 		...(["jobs", "items", "posts"] as const).flatMap((t) => [
 			tomb(t, "id", `${t} WHERE owner IN ${P}`),
