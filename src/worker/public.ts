@@ -1,4 +1,4 @@
-import { clientNet, edgeAllow, rateLimit, sha256, type AuthEnv, type Session } from "./auth";
+import { clientNet, currentSession, edgeAllow, rateLimit, sha256, type AuthEnv, type Session } from "./auth";
 
 /**
  * 会員以外も参加登録できるイベントの公開URL（/e/<token>）
@@ -153,8 +153,12 @@ function whenText(p: PostRow) {
 export async function servePublicPage(request: Request, env: Env, url: URL): Promise<Response | null> {
 	const m = url.pathname.match(/^\/e\/([^/]+)\/?$/);
 	if (!m || !env.ASSETS) return null;
-	const page = await env.ASSETS.fetch(new Request(new URL("/", url), request));
 	const p = await postByToken(env, m[1]).catch(() => null);
+	// ログイン中の会員は、公開ページを出さずにいつもの画面でそのイベントを開く
+	if (p && (await currentSession(env, request).catch(() => null))) {
+		return new Response(null, { status: 302, headers: { Location: `/?post=${encodeURIComponent(p.id)}`, "Cache-Control": "no-store" } });
+	}
+	const page = await env.ASSETS.fetch(new Request(new URL("/", url), request));
 	let html = await page.text();
 	const title = p ? `${p.title}｜参加登録` : "参加登録";
 	const desc = p ? [whenText(p), shortPlace(p.ev_place)].filter(Boolean).join(" ・ ").slice(0, 120) : "";

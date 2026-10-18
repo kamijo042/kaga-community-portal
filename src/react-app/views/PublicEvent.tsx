@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { CONFIG } from "../config";
-import { publicApi, type GuestEntry, type PublicEvent } from "../lib/api";
+import { authApi, publicApi, type GuestEntry, type PublicEvent } from "../lib/api";
 import { evDay } from "../lib/util";
 
 /**
@@ -32,7 +32,12 @@ export function PublicEventPage({ token }: { token: string }) {
 	const [busy, setBusy] = useState(false);
 
 	useEffect(() => {
-		publicApi.event(token).then((e) => { setEv(e); document.title = `${e.title}｜参加登録`; }).catch((e) => setLoadErr((e as Error).message));
+		publicApi.event(token).then(async (e) => {
+			// ログイン中の会員なら、いつもの画面でこのイベントを開く（通常はサーバーで振り分け済み。念のための予備）
+			const me = await authApi.me().catch(() => null);
+			if (me?.user) { location.replace(`/?post=${encodeURIComponent(e.postId)}`); return; }
+			setEv(e); document.title = `${e.title}｜参加登録`;
+		}).catch((e) => setLoadErr((e as Error).message));
 	}, [token]);
 	useEffect(() => {
 		if (!saved) { setMine(null); return; }
