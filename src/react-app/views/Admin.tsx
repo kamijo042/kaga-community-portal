@@ -43,7 +43,7 @@ export function AccountsAdmin() {
 	return (
 		<section className="card admin-card">
 			<div className="admin-head">
-				<div><h3 style={{ margin: 0 }}>アカウント管理（運営）</h3><p className="hint-p">管理者だけに表示されます。新しく移住してきた世帯を招待すると、世帯主あての招待コードが出ます（管理者は上限なし。会員は右上のメニューから1人3世帯まで招待できます）。家族の追加は、その世帯の人が右上のメニュー →「世帯と家族」から行います。</p></div>
+				<div><h3 style={{ margin: 0 }}>アカウント管理（運営）</h3><p className="hint-p">管理者だけに表示されます。新しく移住してきた世帯を招待すると、世帯主あての招待コードが出ます（管理者は上限なし。会員は右上のメニューから1人100世帯まで招待できます）。家族の追加は、その世帯の人が右上のメニュー →「世帯と家族」から行います。</p></div>
 				<button className="btn primary small" id="admin-new" onClick={() => openModal(<NewHouseholdModal onDone={(name, code, exp) => { load(); showCode("世帯主の招待コード", name, code, exp); }} />)}>＋ 新しい世帯を招待</button>
 			</div>
 			{err && <p className="err">{err}</p>}

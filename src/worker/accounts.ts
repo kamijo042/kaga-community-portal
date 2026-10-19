@@ -281,7 +281,7 @@ export async function handleFamily(request: Request, env: Env, url: URL, s: Sess
 
 // ======================================================================
 /** 会員1人が招待できる世帯の数（管理者は上限なし）。招待した世帯が削除されると枠は戻る */
-export const HOUSEHOLD_INVITES_PER_PERSON = 3;
+export const HOUSEHOLD_INVITES_PER_PERSON = 100;
 
 /**
  * 新しい世帯を作り、世帯主あての招待コードを発行する（管理者・会員共通）。
