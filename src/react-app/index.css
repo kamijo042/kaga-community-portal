@@ -333,9 +333,9 @@ table.fam th{font-size:12.5px;color:var(--muted);font-weight:500}
 .check-row input{margin:0;accent-color:var(--ink)}
 
 /* ---------- 詳細 ---------- */
-/* 詳細の写真は切らずに全体を表示（元の縦横比のまま。縦長は画面の高さの7割まで） */
+/* 詳細の写真は切らずに全体を表示。縦長でも下の項目が見える高さに収める（押すと拡大） */
 .gallery .main-ph{background:var(--sunk);border-radius:var(--r);overflow:hidden;max-width:100%;display:flex;align-items:center;justify-content:center}
-.gallery .main-ph img{width:auto;max-width:100%;height:auto;max-height:70vh;object-fit:contain}
+.gallery .main-ph img{width:auto;max-width:100%;height:auto;max-height:min(46vh, 440px);object-fit:contain}
 .gallery .main-ph .noimg{width:100%;aspect-ratio:4/3}
 .gallery .thumbs{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
 .gallery .thumbs button{width:60px;height:60px;border-radius:var(--r-sm);overflow:hidden;border:2px solid transparent;padding:0;cursor:pointer;background:var(--sunk);opacity:.7}
