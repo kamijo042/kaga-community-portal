@@ -220,7 +220,6 @@ export function PostDetail({ id }: { id: string }) {
 				{!mine && <button className="btn primary" id="consult-info" onClick={() => actions.startThread("info", p.id)}>投稿者に質問する</button>}
 			</>}
 		>
-			{p.photo && <div className="gallery"><div className="main-ph"><ZoomPhoto pid={p.photo} alt={p.title} /></div></div>}
 			<div className="meta-row">
 				<CatPill cat={p.cat} />
 				{p.kind && <Pill cls="tgt">{p.kind}</Pill>}
@@ -238,6 +237,7 @@ export function PostDetail({ id }: { id: string }) {
 				</dl>
 			)}
 			{!hasSchedule && p.targets?.length > 0 && <p style={{ fontSize: 13, color: "var(--muted)" }}>対象：{p.targets.join("・")}</p>}
+			{p.photo && <div className="gallery"><div className="main-ph"><ZoomPhoto pid={p.photo} alt={p.title} /></div></div>}
 			{p.body && <p className="detail-desc">{p.body}</p>}
 			{href && <p style={{ fontSize: 14, wordBreak: "break-all" }}>参考リンク：<a href={href} target="_blank" rel="noopener noreferrer">{p.link}</a></p>}
 			{accepting && (
