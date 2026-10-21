@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Empty, Modal, Owner, Photo, Prices, StatusPill } from "../components/ui";
+import { Empty, Modal, Owner, Photo, Prices, StatusPill, ZoomPhoto } from "../components/ui";
 import { ItemForm } from "../forms/ItemForm";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
@@ -86,7 +86,7 @@ export function ItemDetail({ id }: { id: string }) {
 	return (
 		<Modal title="商品の詳細" onClose={closeModal} footer={<><button className="btn ghost" onClick={closeModal}>閉じる</button>{action}</>}>
 			<div className="gallery">
-				<div className="main-ph">{ph.length ? <Photo pid={ph[Math.min(cur, ph.length - 1)]} alt={i.name} /> : <div className="noimg">画像なし</div>}</div>
+				<div className="main-ph">{ph.length ? <ZoomPhoto key={ph[Math.min(cur, ph.length - 1)]} pid={ph[Math.min(cur, ph.length - 1)]} alt={i.name} /> : <div className="noimg">画像なし</div>}</div>
 				{ph.length > 1 && (
 					<div className="thumbs">
 						{ph.map((p, k) => <button key={p} aria-pressed={k === cur} onClick={() => setCur(k)}><Photo pid={p} /></button>)}

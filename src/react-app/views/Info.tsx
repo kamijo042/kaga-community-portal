@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CatPill, Empty, Modal, Owner, Photo, Pill } from "../components/ui";
+import { CatPill, Empty, Modal, Owner, Photo, Pill, ZoomPhoto } from "../components/ui";
 import { PostForm } from "../forms/PostForm";
 import { useActions } from "../lib/actions";
 import { useApp } from "../lib/app";
@@ -30,6 +30,8 @@ export function InfoView() {
 	const [cat, setCat] = useState<"all" | PostCat>("all");
 	const [fam, setFam] = useState(false);
 	const [q, setQ] = useState("");
+	/** 終了したイベントは普段は隠し、押したときだけ表示する */
+	const [showEnded, setShowEnded] = useState(false);
 	if (!me) return null;
 
 	const all = Object.values(d.posts);
@@ -40,7 +42,36 @@ export function InfoView() {
 	if (qq) list = list.filter((p) => `${p.title} ${p.body} ${p.kind} ${p.event?.place ?? ""}`.toLowerCase().includes(qq));
 	if (cat === "event") list.sort(evOrder);
 	else list.sort((a, b) => b.createdAt - a.createdAt);
+	// 日付が過ぎた投稿（終了したイベント）は別にまとめる。新しく終わった順
+	const ended = list.filter((p) => evPast(p)).sort((a, b) => +evStart(b)! - +evStart(a)!);
+	const active = list.filter((p) => !evPast(p));
 	const hasKids = [...myBuckets(d, me)].some((x) => x !== "大人");
+	const renderPost = (p: Post) => {
+						const g = acceptsRsvp(p) ? goCount(p) : null;
+						return (
+							<button key={p.id} className={`post ${evPast(p) ? "is-past" : ""}`} onClick={() => openModal(<PostDetail id={p.id} />)}>
+								{evStart(p) ? <DateBox p={p} /> : p.photo ? <span className="pthumb"><Photo pid={p.photo} /></span> : null}
+								<span className="pmain">
+									<span className="meta-row">
+										<CatPill cat={p.cat} />
+										{p.kind && <Pill cls="tgt">{p.kind}</Pill>}
+										{forMyKids(d, me, p) && <Pill cls="fam">わが家向け</Pill>}
+										{p.owner !== me && p.createdAt > infoPrev && <Pill cls="new">新着</Pill>}
+										{evPast(p) && <Pill cls="done">{isFunding(p) ? "締切済み" : "終了"}</Pill>}
+									</span>
+									<h3>{p.title}</h3>
+									{(evDateStr(p) || p.event?.place) && <span style={{ fontSize: 13 }}>{[evDateStr(p), firstLine(p.event?.place)].filter(Boolean).join(" ・ ")}</span>}
+									<span className="excerpt">{p.body}</span>
+									<span className="pfoot">
+										<span>{nameOf(d, p.owner)}</span>
+										<span>{ago(p.createdAt)}</span>
+										{p.targets?.length > 0 && <span>対象：{p.targets.join("・")}</span>}
+										{g && <span>参加 {g.hh}世帯{p.event?.capacity ? ` / 定員 ${p.event.capacity}人` : ""}</span>}
+									</span>
+								</span>
+							</button>
+						);
+					};
 	const newPost = () => openModal(<PostForm defaultCat={cat === "all" ? "event" : cat} />);
 
 	return (
@@ -78,7 +109,7 @@ export function InfoView() {
 					<button className="chip-btn" aria-pressed={fam} onClick={() => setFam(!fam)} title="家族構成の年齢に合う情報だけを表示">わが家向け</button>
 				</div>
 			</div>
-			{list.length === 0 ? (
+			{active.length === 0 && ended.length === 0 ? (
 				all.length === 0 ? (
 					<Empty title="まだ情報がありません" action={<button className="btn primary" onClick={newPost}>最初の情報を投稿する</button>}>
 						学校や習い事の情報、農作業の手伝い募集、地域の行事など、移住者どうしで役立つことを共有しましょう。イベントには参加表明ができ、対象年齢を付けると子どものいる世帯に「わが家向け」と表示されます。
@@ -89,34 +120,21 @@ export function InfoView() {
 					</Empty>
 				)
 			) : (
-				<div className="posts">
-					{list.map((p) => {
-						const g = acceptsRsvp(p) ? goCount(p) : null;
-						return (
-							<button key={p.id} className={`post ${evPast(p) ? "is-past" : ""}`} onClick={() => openModal(<PostDetail id={p.id} />)}>
-								{evStart(p) ? <DateBox p={p} /> : p.photo ? <span className="pthumb"><Photo pid={p.photo} /></span> : null}
-								<span className="pmain">
-									<span className="meta-row">
-										<CatPill cat={p.cat} />
-										{p.kind && <Pill cls="tgt">{p.kind}</Pill>}
-										{forMyKids(d, me, p) && <Pill cls="fam">わが家向け</Pill>}
-										{p.owner !== me && p.createdAt > infoPrev && <Pill cls="new">新着</Pill>}
-										{evPast(p) && <Pill cls="done">{isFunding(p) ? "締切済み" : "終了"}</Pill>}
-									</span>
-									<h3>{p.title}</h3>
-									{(evDateStr(p) || p.event?.place) && <span style={{ fontSize: 13 }}>{[evDateStr(p), firstLine(p.event?.place)].filter(Boolean).join(" ・ ")}</span>}
-									<span className="excerpt">{p.body}</span>
-									<span className="pfoot">
-										<span>{nameOf(d, p.owner)}</span>
-										<span>{ago(p.createdAt)}</span>
-										{p.targets?.length > 0 && <span>対象：{p.targets.join("・")}</span>}
-										{g && <span>参加 {g.hh}世帯{p.event?.capacity ? ` / 定員 ${p.event.capacity}人` : ""}</span>}
-									</span>
-								</span>
+				<>
+					{active.length > 0 ? (
+						<div className="posts">{active.map(renderPost)}</div>
+					) : (
+						<Empty title="これからの情報はありません">終了したイベントは下から見られます。</Empty>
+					)}
+					{ended.length > 0 && (
+						<div className="ended">
+							<button className="ended-toggle" id="ended-toggle" aria-expanded={showEnded} onClick={() => setShowEnded(!showEnded)}>
+								{showEnded ? "終了したイベントを閉じる" : `終了したイベント（${ended.length}件）を表示`}
 							</button>
-						);
-					})}
-				</div>
+							{showEnded && <div className="posts ended-list">{ended.map(renderPost)}</div>}
+						</div>
+					)}
+				</>
 			)}
 		</>
 	);
@@ -202,7 +220,7 @@ export function PostDetail({ id }: { id: string }) {
 				{!mine && <button className="btn primary" id="consult-info" onClick={() => actions.startThread("info", p.id)}>投稿者に質問する</button>}
 			</>}
 		>
-			{p.photo && <div className="gallery"><div className="main-ph"><Photo pid={p.photo} /></div></div>}
+			{p.photo && <div className="gallery"><div className="main-ph"><ZoomPhoto pid={p.photo} alt={p.title} /></div></div>}
 			<div className="meta-row">
 				<CatPill cat={p.cat} />
 				{p.kind && <Pill cls="tgt">{p.kind}</Pill>}

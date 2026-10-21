@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { CATS, itemStone, nameOf, payModeOf } from "../lib/domain";
 import { useData } from "../lib/store";
 import type { Item, ItemStatus, PostCat } from "../lib/types";
@@ -94,6 +95,33 @@ export function Photo({ pid, alt = "", className }: { pid: string; alt?: string;
 	const [failed, setFailed] = useState(false);
 	if (failed) return <div className="noimg">画像なし</div>;
 	return <img src={photos.url(pid)} alt={alt} className={className} loading="lazy" onError={() => setFailed(true)} />;
+}
+
+/**
+ * 押すと全画面で拡大表示する写真（×・背景・Esc で閉じる）
+ * 詳細画面のモーダルの上に重ねて出す。Esc は拡大表示だけを閉じ、下のモーダルは閉じない
+ */
+export function ZoomPhoto({ pid, alt = "" }: { pid: string; alt?: string }) {
+	const { photos } = useData();
+	const [open, setOpen] = useState(false);
+	useEffect(() => {
+		if (!open) return;
+		const k = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopImmediatePropagation(); e.stopPropagation(); setOpen(false); } };
+		addEventListener("keydown", k, true);
+		return () => removeEventListener("keydown", k, true);
+	}, [open]);
+	return (
+		<>
+			<button type="button" className="zoom-btn" aria-label="写真を拡大" onClick={() => setOpen(true)}><Photo pid={pid} alt={alt} /></button>
+			{open && createPortal(
+				<div className="lightbox" role="dialog" aria-modal="true" aria-label="写真の拡大表示" onClick={() => setOpen(false)}>
+					<img src={photos.url(pid)} alt={alt} onClick={(e) => e.stopPropagation()} />
+					<button type="button" className="lightbox-x" id="lightbox-close" aria-label="閉じる" onClick={() => setOpen(false)}>×</button>
+				</div>,
+				document.body,
+			)}
+		</>
+	);
 }
 
 export function Modal({ title, children, footer, onClose }: { title: string; children: ReactNode; footer?: ReactNode; onClose: () => void }) {
