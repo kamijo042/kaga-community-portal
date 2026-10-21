@@ -40,8 +40,8 @@ export function InfoView() {
 	if (fam) list = list.filter((p) => matchesFamily(d, me, p));
 	const qq = q.trim().toLowerCase();
 	if (qq) list = list.filter((p) => `${p.title} ${p.body} ${p.kind} ${p.event?.place ?? ""}`.toLowerCase().includes(qq));
-	if (cat === "event") list.sort(evOrder);
-	else list.sort((a, b) => b.createdAt - a.createdAt);
+	// どの分類でも：日付のあるものは開催日が近い順 → 日付のないものは新しい投稿順（終了したものは下の別枠）
+	list.sort(evOrder);
 	// 日付が過ぎた投稿（終了したイベント）は別にまとめる。新しく終わった順
 	const ended = list.filter((p) => evPast(p)).sort((a, b) => +evStart(b)! - +evStart(a)!);
 	const active = list.filter((p) => !evPast(p));
