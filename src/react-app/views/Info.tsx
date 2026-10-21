@@ -129,7 +129,7 @@ export function InfoView() {
 					{ended.length > 0 && (
 						<div className="ended">
 							<button className="ended-toggle" id="ended-toggle" aria-expanded={showEnded} onClick={() => setShowEnded(!showEnded)}>
-								{showEnded ? "終了したイベントを閉じる" : `終了したイベント（${ended.length}件）を表示`}
+								{showEnded ? "終了したイベントを閉じる" : "終了したイベントを表示"}
 							</button>
 							{showEnded && <div className="posts ended-list">{ended.map(renderPost)}</div>}
 						</div>
