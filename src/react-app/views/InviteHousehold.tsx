@@ -47,7 +47,7 @@ export function InviteHouseholdModal() {
 		</>}>
 			<form style={{ display: "contents" }} onSubmit={(e) => { e.preventDefault(); if (!full) void save(false); }}>
 				<p className="hint-p">
-					知り合いの移住者の世帯を招待できます。世帯主あての招待コードが出るので、本人に渡してください。
+					知り合いの世帯を招待できます。世帯主あての招待コードが出るので、本人に渡してください。
 					{data && data.limit !== null && <> あなたが招待できるのは <b id="hhinv-remaining">あと{data.remaining}世帯</b>（1人{data.limit}世帯まで）です。</>}
 				</p>
 				{full ? (

@@ -112,7 +112,7 @@ export function InfoView() {
 			{active.length === 0 && ended.length === 0 ? (
 				all.length === 0 ? (
 					<Empty title="まだ情報がありません" action={<button className="btn primary" onClick={newPost}>最初の情報を投稿する</button>}>
-						学校や習い事の情報、農作業の手伝い募集、地域の行事など、移住者どうしで役立つことを共有しましょう。イベントには参加表明ができ、対象年齢を付けると子どものいる世帯に「わが家向け」と表示されます。
+						学校や習い事の情報、農作業の手伝い募集、地域の行事など、地域のみんなで役立つことを共有しましょう。イベントには参加表明ができ、対象年齢を付けると子どものいる世帯に「わが家向け」と表示されます。
 					</Empty>
 				) : (
 					<Empty title="条件に合う情報がありません">

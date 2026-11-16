@@ -1,6 +1,6 @@
 {
 	"name": "kaga-community-portal",
-	"description": "加賀移住者コミュニティ ポータル（React + Cloudflare Workers / D1 / R2 / Durable Objects）",
+	"description": "加賀コミュニティ ポータル（React + Cloudflare Workers / D1 / R2 / Durable Objects）",
 	"cloudflare": {
 		"label": "Vite React Template",
 		"products": [

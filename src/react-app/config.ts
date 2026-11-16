@@ -7,7 +7,7 @@ export type Issuance = { date: string; amount: number; note?: string };
 
 export const CONFIG = {
 	/** コミュニティ名 */
-	siteName: "加賀移住者コミュニティ",
+	siteName: "加賀コミュニティ",
 	/** サブタイトル */
 	tagline: "地域の貢献と加賀市の未来",
 	/** 通貨の名前 */
